@@ -11,14 +11,14 @@ export class ToolEngine {
     context?: Parameters<ToolProcessor["process"]>[1],
   ): Promise<ToolRunResult> {
     validateFile(input, {
-      acceptedMimeTypes: definition.input.acceptedMimeTypes,
-      maxBytes: definition.input.maxBytes,
+      acceptedMimeTypes: definition.inputFormats,
     });
 
     const startedAt = performance.now();
 
     try {
       context?.onStatus?.("processing");
+      context?.onProgress?.(5);
       const output = await processor.process(input, context);
       context?.onProgress?.(100);
       context?.onStatus?.("completed");
