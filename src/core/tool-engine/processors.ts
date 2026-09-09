@@ -4,6 +4,7 @@ import {
   createResizeProcessor,
 } from "../../tools/image/processors";
 import { createCompressPdfProcessor } from "../processing/compress-pdf";
+import { createHeicToJpgProcessor } from "../processing/heic-to-jpg";
 import { createJpgToPdfProcessor } from "../processing/jpg-to-pdf";
 import type { ToolProcessor } from "./types";
 
@@ -25,6 +26,8 @@ export function getDefaultProcessor(slug: string): ToolProcessor | null {
       return createJpgToPdfProcessor();
     case "compress-pdf":
       return createCompressPdfProcessor();
+    case "heic-to-jpg":
+      return createHeicToJpgProcessor();
     default:
       return null;
   }
