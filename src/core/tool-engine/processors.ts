@@ -3,6 +3,7 @@ import {
   createImageConversionProcessor,
   createResizeProcessor,
 } from "../../tools/image/processors";
+import { createCompressPdfProcessor } from "../processing/compress-pdf";
 import { createJpgToPdfProcessor } from "../processing/jpg-to-pdf";
 import type { ToolProcessor } from "./types";
 
@@ -22,6 +23,8 @@ export function getDefaultProcessor(slug: string): ToolProcessor | null {
       return createResizeProcessor(1200, 1200, "image/jpeg");
     case "jpg-to-pdf":
       return createJpgToPdfProcessor();
+    case "compress-pdf":
+      return createCompressPdfProcessor();
     default:
       return null;
   }
