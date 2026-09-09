@@ -5,7 +5,7 @@ export const siteSeo = {
   title: "Pixora — Image, PDF & AI Tools",
   description:
     "Fast, privacy-first image and PDF tools for compression, conversion, resizing and more.",
-  url: "https://pixora.app",
+  url: process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
 };
 
 export const geoSignals: GeoSignals = {
