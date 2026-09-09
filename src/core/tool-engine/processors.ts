@@ -1,8 +1,14 @@
-import { createImageConversionProcessor, createResizeProcessor } from "../../tools/image/processors";
+import {
+  createCompressionProcessor,
+  createImageConversionProcessor,
+  createResizeProcessor,
+} from "../../tools/image/processors";
 import type { ToolProcessor } from "./types";
 
 export function getDefaultProcessor(slug: string): ToolProcessor | null {
   switch (slug) {
+    case "image-compressor":
+      return createCompressionProcessor();
     case "jpg-to-png":
       return createImageConversionProcessor("image/png", "pixora-converted.png");
     case "png-to-jpg":
@@ -11,7 +17,7 @@ export function getDefaultProcessor(slug: string): ToolProcessor | null {
       return createImageConversionProcessor("image/webp", "pixora-converted.webp");
     case "webp-to-jpg":
       return createImageConversionProcessor("image/jpeg", "pixora-converted.jpg");
-    case "resize-image":
+    case "image-resizer":
       return createResizeProcessor(1200, 1200, "image/jpeg");
     default:
       return null;
