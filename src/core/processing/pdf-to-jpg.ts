@@ -23,6 +23,12 @@ function baseName(name: string): string {
   return name.replace(/\.pdf$/i, "") || "pixora-pdf";
 }
 
+function blobFromBytes(bytes: Uint8Array): Blob {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return new Blob([copy.buffer], { type: "application/zip" });
+}
+
 export function createPdfToJpgProcessor(): ToolProcessor {
   return {
     async process(input: File, context?: ToolContext) {
@@ -90,7 +96,7 @@ export function createPdfToJpgProcessor(): ToolProcessor {
         }
         const archive = zipSync(entries, { level: 0 });
         context?.onProgress?.(100);
-        return new File([archive], `${stem}-jpg-images.zip`, {
+        return new File([blobFromBytes(archive)], `${stem}-jpg-images.zip`, {
           type: "application/zip",
           lastModified: Date.now(),
         });
