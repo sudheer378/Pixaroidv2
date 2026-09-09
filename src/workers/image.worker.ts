@@ -11,7 +11,14 @@ type WorkerResponse =
   | { id: string; type: "result"; output: ArrayBuffer; mimeType: string }
   | { id: string; type: "error"; message: string };
 
-self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
+type WorkerScope = {
+  onmessage: ((event: MessageEvent<WorkerRequest>) => void | Promise<void>) | null;
+  postMessage(message: WorkerResponse, transfer?: Transferable[]): void;
+};
+
+const workerScope = self as unknown as WorkerScope;
+
+workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   try {
     const blob = new Blob([request.input], { type: request.mimeType });
@@ -25,19 +32,19 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 
     ctx.drawImage(bitmap, 0, 0, width, height);
     bitmap.close();
-    self.postMessage({ id: request.id, type: "progress", value: 70 } satisfies WorkerResponse);
+    workerScope.postMessage({ id: request.id, type: "progress", value: 70 });
 
     const output = await canvas.convertToBlob({ type: "image/webp", quality: 0.92 });
     const buffer = await output.arrayBuffer();
-    self.postMessage(
-      { id: request.id, type: "result", output: buffer, mimeType: output.type } satisfies WorkerResponse,
+    workerScope.postMessage(
+      { id: request.id, type: "result", output: buffer, mimeType: output.type },
       [buffer],
     );
   } catch (error) {
-    self.postMessage({
+    workerScope.postMessage({
       id: request.id,
       type: "error",
       message: error instanceof Error ? error.message : "Worker processing failed.",
-    } satisfies WorkerResponse);
+    });
   }
 };
