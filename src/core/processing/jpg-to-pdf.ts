@@ -8,6 +8,12 @@ function assertBrowserSupport(): void {
   }
 }
 
+function blobFromBytes(bytes: Uint8Array): Blob {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return new Blob([copy.buffer], { type: "application/pdf" });
+}
+
 export function createJpgToPdfProcessor(): ToolProcessor {
   return {
     async process(input: File, context?: ToolContext) {
@@ -41,7 +47,7 @@ export function createJpgToPdfProcessor(): ToolProcessor {
 
         const pdfBytes = await pdf.save();
         context?.onProgress?.(95);
-        return new File([pdfBytes], "pixora-converted.pdf", {
+        return new File([blobFromBytes(pdfBytes)], "pixora-converted.pdf", {
           type: "application/pdf",
           lastModified: Date.now(),
         });
