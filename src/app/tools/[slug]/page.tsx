@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getToolBySlug, toolRegistry } from "@/core/tools/registry";
+import { ToolWorkspace } from "@/components/tools/tool-workspace";
 
 interface ToolPageProps {
   params: Promise<{ slug: string }>;
@@ -33,7 +34,7 @@ export default async function ToolPage({ params }: ToolPageProps) {
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
   return (
-    <main className="min-h-screen bg-slate-50">
+    <main className="min-h-screen bg-slate-50 text-slate-950">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-5">
           <Link href="/" className="text-xl font-bold tracking-tight">Pixora</Link>
@@ -49,7 +50,7 @@ export default async function ToolPage({ params }: ToolPageProps) {
         <section className="mt-8 grid gap-8 lg:grid-cols-[1.1fr_.9fr]">
           <div>
             <p className="text-sm font-semibold uppercase tracking-widest text-blue-600">{tool.category}</p>
-            <h1 className="mt-3 text-4xl font-bold tracking-tight text-slate-950">{tool.seo.h1}</h1>
+            <h1 className="mt-3 text-4xl font-bold tracking-tight">{tool.seo.h1}</h1>
             <p className="mt-4 max-w-2xl text-lg leading-8 text-slate-600">{tool.description}</p>
             <div className="mt-5 flex flex-wrap gap-2">
               {tool.inputFormats.map((format) => (
@@ -61,16 +62,7 @@ export default async function ToolPage({ params }: ToolPageProps) {
             </div>
           </div>
 
-          <section aria-label={`${tool.name} workspace`} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 p-10 text-center">
-              <p className="font-semibold text-slate-900">Drop your file here</p>
-              <p className="mt-2 text-sm text-slate-500">The processing interface will be connected to the shared Tool Engine in the next build stage.</p>
-              <button type="button" className="mt-6 rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white opacity-60" disabled>
-                Select file
-              </button>
-            </div>
-            <p className="mt-4 text-xs leading-5 text-slate-500">Processing mode: {tool.processingMode}. Privacy messaging will reflect the actual processor once implemented.</p>
-          </section>
+          <ToolWorkspace tool={tool} />
         </section>
 
         <section className="mt-14 grid gap-8 md:grid-cols-2">
@@ -89,7 +81,7 @@ export default async function ToolPage({ params }: ToolPageProps) {
               {tool.seo.questions.map((question) => (
                 <div key={question}>
                   <h3 className="font-semibold text-slate-900">{question}</h3>
-                  <p className="mt-1 text-sm leading-6 text-slate-600">Pixora will provide the task-specific answer and operating details here.</p>
+                  <p className="mt-1 text-sm leading-6 text-slate-600">This answer is being expanded with task-specific guidance as the Pixora content system matures.</p>
                 </div>
               ))}
             </div>
