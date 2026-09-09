@@ -26,12 +26,16 @@ function throwIfAborted(context?: ToolContext): void {
   }
 }
 
+function blobFromBytes(bytes: Uint8Array, type: string): Blob {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return new Blob([copy.buffer], { type });
+}
+
 async function structuralCompression(source: ArrayBuffer, context?: ToolContext): Promise<Uint8Array> {
   throwIfAborted(context);
   const pdf = await PDFDocument.load(source, { ignoreEncryption: false });
   try {
-    // Keep this pass lossless: it preserves selectable text, vector graphics,
-    // annotations and form structure while reducing serialization overhead.
     pdf.setTitle("");
     pdf.setAuthor("");
     pdf.setSubject("");
@@ -144,12 +148,10 @@ export function createCompressPdfProcessor(): ToolProcessor {
         if (rasterized.byteLength < best.byteLength) best = rasterized;
       }
 
-      // Never return a larger file. Balanced mode is lossless; strong mode may
-      // rasterize image-heavy PDFs, but only when that produces a smaller file.
       const output = best.byteLength < input.size ? best : new Uint8Array(source);
       context?.onProgress?.(95);
 
-      return new File([output], "pixora-compressed.pdf", {
+      return new File([blobFromBytes(output, "application/pdf")], "pixora-compressed.pdf", {
         type: "application/pdf",
         lastModified: Date.now(),
       });
