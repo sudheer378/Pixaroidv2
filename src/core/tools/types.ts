@@ -21,7 +21,3 @@ export interface ToolDefinition {
   relatedTools: readonly string[];
   status: "phase-1" | "planned";
 }
-
-export interface ToolProcessor<Input = unknown, Output = unknown> {
-  process(input: Input): Promise<Output>;
-}
