@@ -17,6 +17,7 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
     setError(null);
     setResult(null);
     setProgress(0);
+    setStatus("processing");
 
     try {
       const response = await runTool(tool.slug, file, {
@@ -36,8 +37,10 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = result instanceof File && result.name ? result.name : `pixora-${tool.slug}`;
+    document.body.appendChild(anchor);
     anchor.click();
-    URL.revokeObjectURL(url);
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   return (
@@ -46,10 +49,11 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
         <span>Select a file</span>
         <input
           type="file"
-          accept={tool.input.acceptedMimeTypes.join(",")}
+          accept={tool.inputFormats.join(",")}
           onChange={(event) => {
-            setFile(event.target.files?.[0] ?? null);
-            setStatus("ready");
+            const selected = event.target.files?.[0] ?? null;
+            setFile(selected);
+            setStatus(selected ? "ready" : "idle");
             setProgress(0);
             setResult(null);
             setError(null);
