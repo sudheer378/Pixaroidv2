@@ -1,3 +1,4 @@
+import { compressImage } from "../../core/processing/compress-image";
 import { ProcessingError } from "../../core/processing/errors";
 import type { ToolContext, ToolProcessor } from "../../core/tool-engine/types";
 import { canvasFromImage, canvasToBlob, decodeImage } from "./common";
@@ -11,6 +12,19 @@ export function createImageConversionProcessor(outputType: string, outputName: s
       const blob = await canvasToBlob(canvas, outputType, 0.92);
       context?.onProgress?.(95);
       return new File([blob], outputName, { type: outputType });
+    },
+  };
+}
+
+export function createCompressionProcessor(): ToolProcessor {
+  return {
+    async process(input: File, context?: ToolContext) {
+      context?.onProgress?.(15);
+      const result = await compressImage(input);
+      context?.onProgress?.(95);
+      return new File([result.blob], `pixora-compressed.${extensionFor(result.blob.type)}`, {
+        type: result.blob.type,
+      });
     },
   };
 }
