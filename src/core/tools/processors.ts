@@ -1,6 +1,6 @@
 import { compressImage, type ImageCompressionOptions } from "@/core/processing/compress-image";
 import { imageToImageProcessor } from "@/core/processing/image-processor";
-import type { ToolProcessor } from "@/core/processing/types";
+import type { ToolProcessor } from "@/core/tool-engine/types";
 
 export const imageConversionProcessors: Record<string, ToolProcessor> = {
   "jpg-to-png": imageToImageProcessor("image/png"),
@@ -9,6 +9,13 @@ export const imageConversionProcessors: Record<string, ToolProcessor> = {
   "webp-to-jpg": imageToImageProcessor("image/jpeg"),
 };
 
-export function createCompressionProcessor(options: ImageCompressionOptions = {}): ToolProcessor<File, Blob> {
-  return { process: (input) => compressImage(input, options).then((result) => result.blob) };
+export function createCompressionProcessor(options: ImageCompressionOptions = {}): ToolProcessor {
+  return {
+    process: async (input, context) => {
+      context?.onProgress?.(15);
+      const result = await compressImage(input, options);
+      context?.onProgress?.(95);
+      return result.blob;
+    },
+  };
 }
