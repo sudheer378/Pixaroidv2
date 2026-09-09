@@ -1,8 +1,11 @@
 import type { ProcessingError } from "../processing/errors";
 import type { ProcessingStatus } from "../processing/types";
 
+export type ToolOptions = Readonly<Record<string, unknown>>;
+
 export type ToolContext = {
   signal?: AbortSignal;
+  options?: ToolOptions;
   onProgress?: (progress: number) => void;
   onStatus?: (status: ProcessingStatus) => void;
 };
