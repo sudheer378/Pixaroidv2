@@ -5,7 +5,7 @@ import type { ToolContext } from "./types";
 
 const engine = new ToolEngine();
 
-export async function runTool(slug: string, input: File, context?: ToolContext) {
+export async function runTool(slug: string, input: File | File[], context?: ToolContext) {
   const definition = getToolBySlug(slug);
   if (!definition) {
     throw new Error(`Unknown Pixora tool: ${slug}`);

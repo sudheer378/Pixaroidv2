@@ -11,7 +11,7 @@ export type ToolContext = {
 };
 
 export type ToolProcessor = {
-  process(input: File, context?: ToolContext): Promise<File | Blob>;
+  process(input: File | File[], context?: ToolContext): Promise<File | Blob>;
 };
 
 export type ToolRunResult = {
