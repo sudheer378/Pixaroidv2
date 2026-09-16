@@ -1,11 +1,17 @@
 import type { GeoSignals } from "./types";
 
+const fallbackUrl = "https://pixora.example.com";
+if (typeof window === "undefined" && !process.env.NEXT_PUBLIC_SITE_URL) {
+  // Warn at build time if site URL is not configured — sitemap would otherwise contain localhost.
+  console.warn(`[seo] NEXT_PUBLIC_SITE_URL not set, falling back to ${fallbackUrl} for sitemap/SEO. Set it in production.`);
+}
+
 export const siteSeo = {
   name: "Pixora",
   title: "Pixora — Free Online Tools: PDF, Image, Calculators & More",
   description:
     "32+ free online tools: merge PDF, compress images, BMI calculator, QR code generator, word counter and more. Private, browser-based — nothing is uploaded.",
-  url: process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
+  url: process.env.NEXT_PUBLIC_SITE_URL ?? fallbackUrl,
 };
 
 export const geoSignals: GeoSignals = {

@@ -1,7 +1,13 @@
 export type ProcessingStatus = "idle" | "validating" | "ready" | "processing" | "completed" | "error";
 
-export interface ProcessingError {
+/**
+ * Legacy shape kept for reference; the runtime error class is
+ * `ProcessingError` from `./errors.ts`. Renamed to avoid name collision
+ * that previously shadowed the class with an interface.
+ */
+export interface ProcessingErrorInfo {
   code:
+    | "FILE_REQUIRED"
     | "FILE_TOO_LARGE"
     | "UNSUPPORTED_FORMAT"
     | "INVALID_FILE"

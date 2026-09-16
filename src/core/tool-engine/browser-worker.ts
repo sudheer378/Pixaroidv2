@@ -19,18 +19,26 @@ function getWorker(): Worker {
 
 export async function processImageInWorker(file: File, options: WorkerImageOptions = {}): Promise<Blob> {
   const activeWorker = getWorker();
-  const id = crypto.randomUUID();
+  const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
   const input = await file.arrayBuffer();
 
   return new Promise<Blob>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      activeWorker.removeEventListener("message", handleMessage);
+      reject(new ProcessingError("PROCESSING_FAILED", "Image worker timed out."));
+    }, 30_000);
+
     const handleMessage = (event: MessageEvent) => {
       const message = event.data as { id: string; type: string; output?: ArrayBuffer; mimeType?: string; message?: string };
       if (message.id !== id) return;
 
       if (message.type === "result" && message.output) {
+        window.clearTimeout(timeout);
         activeWorker.removeEventListener("message", handleMessage);
-        resolve(new Blob([message.output], { type: options.outputType ?? message.mimeType ?? "image/webp" }));
+        // Use actual mime from worker if available, falling back to requested type.
+        resolve(new Blob([message.output], { type: message.mimeType ?? options.outputType ?? "image/webp" }));
       } else if (message.type === "error") {
+        window.clearTimeout(timeout);
         activeWorker.removeEventListener("message", handleMessage);
         reject(new ProcessingError("PROCESSING_FAILED", message.message ?? "Worker processing failed."));
       }
@@ -38,7 +46,15 @@ export async function processImageInWorker(file: File, options: WorkerImageOptio
 
     activeWorker.addEventListener("message", handleMessage);
     activeWorker.postMessage(
-      { id, input, mimeType: file.type, width: options.width, height: options.height },
+      {
+        id,
+        input,
+        mimeType: file.type,
+        outputType: options.outputType,
+        quality: options.quality,
+        width: options.width,
+        height: options.height,
+      },
       [input],
     );
   });

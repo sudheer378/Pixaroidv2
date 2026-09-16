@@ -54,7 +54,11 @@ export async function compressImage(input: Blob, options: ImageCompressionOption
     if (!context) throw new Error("Could not create an image processing canvas.");
     context.drawImage(bitmap, 0, 0, width, height);
 
-    const outputType = options.outputType ?? (input.type === "image/webp" ? "image/webp" : "image/jpeg");
+    // Preserve original type when possible: PNG stays PNG, WebP stays WebP, otherwise JPEG.
+    // Previously PNG was silently converted to JPEG losing transparency — fixed.
+    const inferredType =
+      input.type === "image/png" ? "image/png" : input.type === "image/webp" ? "image/webp" : "image/jpeg";
+    const outputType = options.outputType ?? (inferredType as "image/jpeg" | "image/webp" | "image/png");
     let quality = clampQuality(options.quality ?? DEFAULT_QUALITY);
     let blob = await canvasBlob(canvas, outputType, quality);
 

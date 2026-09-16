@@ -25,6 +25,7 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
   const [splitRange, setSplitRange] = useState("");
   const [resizeWidth, setResizeWidth] = useState("");
   const [resizeHeight, setResizeHeight] = useState("");
+  const [pdfPreset, setPdfPreset] = useState<"balanced" | "strong">("balanced");
 
   const accept = (tool.inputFormats ?? []).join(",");
   const multi = Boolean(tool.multiFile);
@@ -33,7 +34,8 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
     if (!list) return;
     const incoming = Array.from(list);
     if (incoming.length === 0) return;
-    setFiles(multi ? [...files, ...incoming] : [incoming[0]]);
+    // Use functional update to avoid stale closure race when adding files quickly.
+    setFiles((prev) => (multi ? [...prev, ...incoming] : [incoming[0]]));
     setStatus("ready");
     setResult(null);
     setError(null);
@@ -41,17 +43,21 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
   }
 
   function moveFile(index: number, direction: -1 | 1) {
-    const next = [...files];
-    const target = index + direction;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
-    setFiles(next);
+    setFiles((prev) => {
+      const next = [...prev];
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return prev;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
   }
 
   function removeFile(index: number) {
-    const next = files.filter((_, i) => i !== index);
-    setFiles(next);
-    if (next.length === 0) setStatus("idle");
+    setFiles((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0) setStatus("idle");
+      return next;
+    });
   }
 
   async function processFiles() {
@@ -69,6 +75,9 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
     if (tool.slug === "image-resizer") {
       options.width = Number(resizeWidth) || 0;
       options.height = Number(resizeHeight) || 0;
+    }
+    if (tool.slug === "compress-pdf") {
+      options.preset = pdfPreset;
     }
 
     try {
@@ -93,7 +102,8 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    // Give browser time to start download before revoking.
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   const inputSize = files.reduce((sum, file) => sum + file.size, 0);
@@ -148,7 +158,7 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
         <ul className="mt-4 space-y-2">
           {files.map((file, index) => (
             <li
-              key={`${file.name}-${index}`}
+              key={`${file.name}-${file.size}-${index}`}
               className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
             >
               <span className="min-w-0 flex-1 truncate text-slate-700">{file.name}</span>
@@ -187,6 +197,22 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
               aria-label="Page range"
             />
           )}
+        </div>
+      )}
+
+      {tool.slug === "compress-pdf" && files.length > 0 && (
+        <div className="mt-4 space-y-3 rounded-lg border border-slate-200 p-4">
+          <p className="text-sm font-medium text-slate-700">Compression strength</p>
+          <div className="flex gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input type="radio" name="pdf-preset" checked={pdfPreset === "balanced"} onChange={() => setPdfPreset("balanced")} />
+              Balanced (preserves quality)
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="radio" name="pdf-preset" checked={pdfPreset === "strong"} onChange={() => setPdfPreset("strong")} />
+              Strong (smaller file, may soften scans)
+            </label>
+          </div>
         </div>
       )}
 

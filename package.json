@@ -17,7 +17,7 @@
     "@types/qrcode": "^1.5.6",
     "fflate": "0.8.3",
     "heic-to": "1.5.2",
-    "next": "16.0.1",
+    "next": "^16.0.11",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.3.289",
     "qrcode": "^1.5.4",
@@ -30,8 +30,8 @@
     "@types/react": "19.2.2",
     "@types/react-dom": "19.2.2",
     "eslint": "9.39.1",
-    "eslint-config-next": "16.0.1",
+    "eslint-config-next": "^16.0.11",
     "typescript": "5.9.3",
-    "vitest": "4.0.8"
+    "vitest": "4.1.11"
   }
 }
