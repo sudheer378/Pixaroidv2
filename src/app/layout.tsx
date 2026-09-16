@@ -20,12 +20,17 @@ export const metadata: Metadata = {
     title: siteSeo.title,
     description: siteSeo.description,
   },
+  twitter: {
+    card: "summary_large_image",
+    title: siteSeo.title,
+    description: siteSeo.description,
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className="min-h-screen bg-slate-50 text-slate-950 antialiased">{children}</body>
     </html>
   );
 }
