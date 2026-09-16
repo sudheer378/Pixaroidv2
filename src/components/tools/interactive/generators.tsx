@@ -52,16 +52,23 @@ export function QrCodeGenerator() {
     if (!payload) {
       const ctx = canvas.getContext("2d");
       ctx?.clearRect(0, 0, canvas.width, canvas.height);
-      // Async state update keeps React render cascades clean.
-      Promise.resolve().then(() => setHasContent(false));
+      // Clearing canvas when payload becomes empty is expected to hide preview.
+      // Using microtask to avoid synchronous setState in effect (eslint rule).
+      queueMicrotask(() => setHasContent(false));
       return;
     }
+    let cancelled = false;
     QRCode.toCanvas(canvas, payload, {
       width: size,
       margin: 2,
       color: { dark, light },
       errorCorrectionLevel: "M",
-    }).then(() => setHasContent(true)).catch(() => setHasContent(false));
+    }).then(() => {
+      if (!cancelled) setHasContent(true);
+    }).catch(() => {
+      if (!cancelled) setHasContent(false);
+    });
+    return () => { cancelled = true; };
   }, [payload, dark, light, size]);
 
   async function downloadPng() {
@@ -86,7 +93,7 @@ export function QrCodeGenerator() {
     const blob = new Blob([svg], { type: "image/svg+xml" });
     const objectUrl = URL.createObjectURL(blob);
     triggerDownload(objectUrl, "pixora-qr-code.svg");
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
   function triggerDownload(href: string, name: string) {

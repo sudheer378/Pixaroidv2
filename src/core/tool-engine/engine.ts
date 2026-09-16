@@ -16,8 +16,12 @@ export class ToolEngine {
     if (accepted.length > 0) {
       for (const file of files) {
         // Some formats (notably HEIC on Windows) report an empty MIME type;
-        // let the processor perform content-level validation in that case.
-        if (file.type === "") continue;
+        // let the processor perform content-level validation for mime, but
+        // still enforce size checks.
+        if (file.type === "") {
+          validateFile(file, { acceptedMimeTypes: [], maxBytes: 100 * 1024 * 1024, allowEmptyMime: true });
+          continue;
+        }
         validateFile(file, { acceptedMimeTypes: accepted, maxBytes: 100 * 1024 * 1024 });
       }
     }

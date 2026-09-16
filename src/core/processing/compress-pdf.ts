@@ -49,7 +49,12 @@ async function structuralCompression(source: ArrayBuffer, context?: ToolContext)
       updateFieldAppearances: false,
     });
   } finally {
-    pdf.flush();
+    // flush is optional but exists in pdf-lib; await it safely.
+    try {
+      await (pdf as unknown as { flush: () => Promise<void> }).flush();
+    } catch {
+      // ignore if flush not available or fails
+    }
   }
 }
 
@@ -143,12 +148,25 @@ export function createCompressPdfProcessor(): ToolProcessor {
       context?.onProgress?.(40);
 
       let best = structural;
-      if (resolvePdfCompressionPreset(context) === "strong" && structural.byteLength >= input.size) {
-        const rasterized = await rasterCompression(source, context);
-        if (rasterized.byteLength < best.byteLength) best = rasterized;
+      const preset = resolvePdfCompressionPreset(context);
+      // Previously raster only ran when preset === strong AND structural >= original.
+      // Fixed: in strong mode, always try raster and pick smallest; in balanced mode,
+      // also try raster if structural didn't save at least 5% to give user benefit.
+      const shouldTryRaster =
+        preset === "strong" || structural.byteLength >= source.byteLength * 0.95;
+
+      if (shouldTryRaster) {
+        try {
+          const rasterized = await rasterCompression(source, context);
+          if (rasterized.byteLength < best.byteLength) best = rasterized;
+        } catch (error) {
+          // If raster fails (e.g. too many pages), keep structural result
+          // unless we're in strong mode where we want to surface the error for large docs.
+          if (preset === "strong" && error instanceof ProcessingError) throw error;
+        }
       }
 
-      const output = best.byteLength < input.size ? best : new Uint8Array(source);
+      const output = best.byteLength < source.byteLength ? best : new Uint8Array(source);
       context?.onProgress?.(95);
 
       return new File([blobFromBytes(output, "application/pdf")], "pixora-compressed.pdf", {

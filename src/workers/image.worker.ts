@@ -2,6 +2,8 @@ type WorkerRequest = {
   id: string;
   input: ArrayBuffer;
   mimeType: string;
+  outputType?: string;
+  quality?: number;
   width?: number;
   height?: number;
 };
@@ -25,6 +27,9 @@ workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     const bitmap = await createImageBitmap(blob);
     const width = request.width ?? bitmap.width;
     const height = request.height ?? bitmap.height;
+    // Honor requested output type; previously always WebP causing mime mismatch.
+    const outputType = request.outputType ?? "image/webp";
+    const quality = typeof request.quality === "number" ? request.quality : 0.92;
 
     const canvas = new OffscreenCanvas(width, height);
     const ctx = canvas.getContext("2d");
@@ -34,7 +39,7 @@ workerScope.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     bitmap.close();
     workerScope.postMessage({ id: request.id, type: "progress", value: 70 });
 
-    const output = await canvas.convertToBlob({ type: "image/webp", quality: 0.92 });
+    const output = await canvas.convertToBlob({ type: outputType, quality });
     const buffer = await output.arrayBuffer();
     workerScope.postMessage(
       { id: request.id, type: "result", output: buffer, mimeType: output.type },

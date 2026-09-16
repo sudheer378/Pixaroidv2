@@ -48,7 +48,6 @@ const widgets: Record<string, React.ComponentType> = {
   "uuid-generator": UuidGenerator,
   "json-formatter": JsonFormatter,
   "base64-encoder": Base64Tool,
-  "uuid-generator-dev": UuidGenerator,
   "hash-generator": HashGenerator,
   "color-converter": ColorConverter,
   "timezone-converter": TimezoneConverter,
