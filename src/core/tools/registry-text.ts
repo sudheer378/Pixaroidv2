@@ -54,7 +54,7 @@ export const textTools: ToolDefinition[] = [
     primaryIntent: "count characters in text",
     processingMode: "browser",
     seo: {
-      title: "Character Counter — Count Characters Online with Platform Limits",
+      title: "Character Counter — Count Characters Online Free",
       description:
         "Free character counter. Count characters with and without spaces, with live limit checks for X/Twitter, Instagram captions, SMS and SEO meta descriptions.",
       h1: "Character Counter",

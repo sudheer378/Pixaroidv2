@@ -1,4 +1,4 @@
-import { siteSeo } from "@/core/seo/config";
+import { geoSignals, siteSeo } from "@/core/seo/config";
 import type { ToolDefinition } from "@/core/tools/types";
 
 function JsonLd({ data }: { data: object }) {
@@ -12,15 +12,36 @@ function JsonLd({ data }: { data: object }) {
 
 export function WebsiteJsonLd() {
   return (
-    <JsonLd
-      data={{
-        "@context": "https://schema.org",
-        "@type": "WebSite",
-        name: siteSeo.name,
-        url: siteSeo.url,
-        description: siteSeo.description,
-      }}
-    />
+    <>
+      <JsonLd
+        data={{
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          name: siteSeo.name,
+          url: siteSeo.url,
+          description: siteSeo.description,
+          inLanguage: "en",
+          publisher: { "@type": "Organization", name: siteSeo.name, url: siteSeo.url },
+        }}
+      />
+      {/* Surfaces the curated entity terms and factual claims to crawlers and
+          answer engines, which otherwise never saw them. */}
+      <JsonLd
+        data={{
+          "@context": "https://schema.org",
+          "@type": "Organization",
+          name: siteSeo.name,
+          url: siteSeo.url,
+          description: siteSeo.description,
+          knowsAbout: [...geoSignals.entityTerms],
+          areaServed: geoSignals.priorityMarkets.map((code) => ({
+            "@type": "Country",
+            identifier: code,
+          })),
+          disambiguatingDescription: geoSignals.factualClaims.join(" "),
+        }}
+      />
+    </>
   );
 }
 

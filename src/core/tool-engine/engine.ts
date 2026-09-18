@@ -13,6 +13,11 @@ export class ToolEngine {
     const files = Array.isArray(input) ? input : [input];
     const accepted = definition.inputFormats ?? [];
 
+    const primary = files[0];
+    if (!primary) {
+      throw new ProcessingError("FILE_REQUIRED", "Please select a file to continue.");
+    }
+
     if (accepted.length > 0) {
       for (const file of files) {
         // Some formats (notably HEIC on Windows) report an empty MIME type;
@@ -31,7 +36,7 @@ export class ToolEngine {
     try {
       context?.onStatus?.("processing");
       context?.onProgress?.(5);
-      const output = await processor.process(definition.multiFile ? files : files[0], context);
+      const output = await processor.process(definition.multiFile ? files : primary, context);
       context?.onProgress?.(100);
       context?.onStatus?.("completed");
 

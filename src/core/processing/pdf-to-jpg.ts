@@ -88,7 +88,8 @@ export function createPdfToJpgProcessor(): ToolProcessor {
           context?.onProgress?.(5 + Math.round((pageNumber / pdf.numPages) * 90));
         }
 
-        if (outputs.length === 1) return outputs[0];
+        const first = outputs[0];
+        if (outputs.length === 1 && first) return first;
 
         const entries: Record<string, Uint8Array> = {};
         for (const file of outputs) {

@@ -47,14 +47,15 @@ const widgets: Record<string, React.ComponentType> = {
   "random-number-generator": RandomNumberGenerator,
   "uuid-generator": UuidGenerator,
   "json-formatter": JsonFormatter,
-  "base64-encoder": Base64Tool,
+  "base64-encode-decode": Base64Tool,
   "hash-generator": HashGenerator,
   "color-converter": ColorConverter,
   "timezone-converter": TimezoneConverter,
 };
 
 export function InteractiveWorkspace({ tool }: { tool: ToolDefinition }) {
-  const Widget = widgets[tool.id];
+  // Keyed on slug, matching getDefaultProcessor, so both lookup tables agree.
+  const Widget = widgets[tool.slug];
   if (!Widget) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">

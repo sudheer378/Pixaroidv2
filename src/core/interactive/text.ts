@@ -117,11 +117,16 @@ const LOREM_WORDS = (
   "id est laborum"
 ).split(" ");
 
+/** LOREM_WORDS is non-empty, so the fallback is unreachable; it satisfies noUncheckedIndexedAccess. */
+function randomLoremWord(random: () => number): string {
+  return LOREM_WORDS[Math.floor(random() * LOREM_WORDS.length)] ?? "lorem";
+}
+
 function loremSentence(random: () => number): string {
   const length = 6 + Math.floor(random() * 10);
   const words: string[] = [];
   for (let i = 0; i < length; i += 1) {
-    words.push(LOREM_WORDS[Math.floor(random() * LOREM_WORDS.length)]);
+    words.push(randomLoremWord(random));
   }
   const sentence = words.join(" ");
   return sentence.charAt(0).toUpperCase() + sentence.slice(1) + ".";
@@ -135,7 +140,7 @@ export function generateLorem(unit: LoremUnit, count: number, random: () => numb
   if (unit === "words") {
     const words = ["Lorem", "ipsum"];
     while (words.length < clamped) {
-      words.push(LOREM_WORDS[Math.floor(random() * LOREM_WORDS.length)]);
+      words.push(randomLoremWord(random));
     }
     return words.slice(0, clamped).join(" ") + ".";
   }

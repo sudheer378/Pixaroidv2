@@ -33,9 +33,10 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
   function acceptFiles(list: FileList | File[] | null) {
     if (!list) return;
     const incoming = Array.from(list);
-    if (incoming.length === 0) return;
+    const [firstIncoming] = incoming;
+    if (!firstIncoming) return;
     // Use functional update to avoid stale closure race when adding files quickly.
-    setFiles((prev) => (multi ? [...prev, ...incoming] : [incoming[0]]));
+    setFiles((prev) => (multi ? [...prev, ...incoming] : [firstIncoming]));
     setStatus("ready");
     setResult(null);
     setError(null);
@@ -47,7 +48,11 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
       const next = [...prev];
       const target = index + direction;
       if (target < 0 || target >= next.length) return prev;
-      [next[index], next[target]] = [next[target], next[index]];
+      const current = next[index];
+      const swap = next[target];
+      if (!current || !swap) return prev;
+      next[index] = swap;
+      next[target] = current;
       return next;
     });
   }
@@ -61,7 +66,8 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
   }
 
   async function processFiles() {
-    if (files.length === 0) return;
+    const [firstFile] = files;
+    if (!firstFile) return;
     setError(null);
     setResult(null);
     setProgress(0);
@@ -81,7 +87,7 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
     }
 
     try {
-      const response = await runTool(tool.slug, multi ? files : files[0], {
+      const response = await runTool(tool.slug, multi ? files : firstFile, {
         options,
         onProgress: setProgress,
         onStatus: setStatus,
@@ -118,7 +124,11 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
         tabIndex={0}
         onClick={() => inputRef.current?.click()}
         onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") inputRef.current?.click();
+          if (event.key === "Enter" || event.key === " ") {
+            // Space would otherwise scroll the page as well as activating.
+            event.preventDefault();
+            inputRef.current?.click();
+          }
         }}
         onDragOver={(event) => {
           event.preventDefault();
@@ -277,7 +287,7 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
           <span className="font-medium text-rose-600">{error}</span>
         ) : result ? (
           <span className="font-medium text-emerald-600">
-            Done{result.size && inputSize > result.size && tool.category !== "image" ? ` — ${Math.round((1 - result.size / inputSize) * 100)}% smaller` : ""}. Your file is ready to download.
+            Done{result.size > 0 && inputSize > result.size ? ` — ${Math.round((1 - result.size / inputSize) * 100)}% smaller` : ""}. Your file is ready to download.
           </span>
         ) : files.length > 0 ? (
           `${files.length} file${files.length > 1 ? "s" : ""} selected (${formatBytes(inputSize)}).`

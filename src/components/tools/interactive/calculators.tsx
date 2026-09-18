@@ -124,7 +124,7 @@ function toDateInput(date: Date): string {
 
 function parseDateInput(value: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const [year, month, day] = value.split("-").map(Number);
+  const [year = 0, month = 1, day = 1] = value.split("-").map(Number);
   const date = new Date(year, month - 1, day);
   return Number.isNaN(date.getTime()) ? null : date;
 }
@@ -453,8 +453,10 @@ export function UnitConverter() {
   function switchCategory(next: UnitCategory) {
     setCategory(next);
     const nextUnits = unitCategories[next].units;
-    setFromUnit(nextUnits[0].id);
-    setToUnit(nextUnits[1]?.id ?? nextUnits[0].id);
+    const first = nextUnits[0];
+    if (!first) return;
+    setFromUnit(first.id);
+    setToUnit(nextUnits[1]?.id ?? first.id);
   }
 
   const result = useMemo(() => {

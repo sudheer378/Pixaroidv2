@@ -11,7 +11,7 @@ export const calculatorTools: ToolDefinition[] = [
     primaryIntent: "calculate BMI",
     processingMode: "browser",
     seo: {
-      title: "BMI Calculator — Check Your Body Mass Index (Metric & Imperial)",
+      title: "BMI Calculator — Metric & Imperial Body Mass Index",
       description:
         "Free BMI calculator for adults. Enter height and weight in metric or imperial units to get your BMI, WHO category and healthy weight range instantly.",
       h1: "BMI Calculator",

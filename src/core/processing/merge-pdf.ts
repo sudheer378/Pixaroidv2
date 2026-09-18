@@ -27,28 +27,33 @@ export function createMergePdfProcessor(): ToolProcessor {
         throw new ProcessingError("FILE_TOO_LARGE", "Combined size is limited to 100 MB.");
       }
 
+      // Validate every type upfront: cheaper than parsing, and it reports the
+      // offending file immediately instead of after earlier files are parsed.
+      for (const file of files) {
+        if (file.type !== "application/pdf") {
+          throw new ProcessingError("UNSUPPORTED_FORMAT", `${file.name} is not a PDF file.`);
+        }
+      }
+
       const merged = await PDFDocument.create();
       merged.setProducer("Pixora");
       merged.setCreator("Pixora Merge PDF");
 
-      for (let index = 0; index < files.length; index += 1) {
-        const file = files[index];
-        if (file.type !== "application/pdf") {
-          throw new ProcessingError("UNSUPPORTED_FORMAT", `${file.name} is not a PDF file.`);
-        }
-
-        let source: PDFDocument;
+      for (const [index, file] of files.entries()) {
+        // Loading and page extraction share one guard: pdf-lib accepts some
+        // malformed files at load and only fails when the page tree is walked,
+        // which would otherwise surface a raw TypeError to the user.
         try {
-          source = await PDFDocument.load(await file.arrayBuffer(), { ignoreEncryption: false });
-        } catch {
+          const source = await PDFDocument.load(await file.arrayBuffer(), { ignoreEncryption: false });
+          const pages = await merged.copyPages(source, source.getPageIndices());
+          for (const page of pages) merged.addPage(page);
+        } catch (cause) {
+          if (cause instanceof ProcessingError) throw cause;
           throw new ProcessingError(
             "INVALID_FILE",
             `${file.name} could not be read. It may be corrupted or password protected.`,
           );
         }
-
-        const pages = await merged.copyPages(source, source.getPageIndices());
-        for (const page of pages) merged.addPage(page);
         context?.onProgress?.(Math.round(((index + 1) / files.length) * 90));
       }
 

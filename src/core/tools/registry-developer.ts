@@ -37,11 +37,11 @@ export const developerTools: ToolDefinition[] = [
       ],
       keywords: ["json formatter", "json validator", "json beautifier", "json minify"],
     },
-    relatedTools: ["base64-encoder", "hash-generator", "uuid-generator"],
+    relatedTools: ["base64-encode-decode", "hash-generator", "uuid-generator"],
     status: "live",
   },
   {
-    id: "base64-encoder",
+    id: "base64-encode-decode",
     slug: "base64-encode-decode",
     name: "Base64 Encode / Decode",
     category: "developer",
@@ -151,7 +151,7 @@ export const developerTools: ToolDefinition[] = [
       ],
       keywords: ["hash generator", "sha256 generator", "sha1 hash", "checksum generator"],
     },
-    relatedTools: ["base64-encoder", "uuid-generator", "password-generator"],
+    relatedTools: ["base64-encode-decode", "uuid-generator", "password-generator"],
     status: "live",
   },
   {
@@ -189,7 +189,7 @@ export const developerTools: ToolDefinition[] = [
       ],
       keywords: ["hex to rgb", "color converter", "rgb to hsl", "color picker online"],
     },
-    relatedTools: ["json-formatter", "base64-encoder", "qr-code-generator"],
+    relatedTools: ["json-formatter", "base64-encode-decode", "qr-code-generator"],
     status: "live",
   },
   {

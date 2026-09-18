@@ -62,7 +62,7 @@ export const toolCategories: readonly ToolCategoryMeta[] = [
     label: "Developer Tools",
     shortLabel: "Developer",
     description: "Format JSON, encode Base64, generate UUIDs and hashes, convert colors and time zones.",
-    seoTitle: "Free Online Developer Tools — JSON, Base64, UUID, Hash & Color",
+    seoTitle: "Free Developer Tools — JSON, Base64, UUID & Hash",
     seoDescription:
       "Free developer tools: JSON formatter, Base64 encoder/decoder, UUID generator, MD5/SHA hash generator, color converter and time zone converter.",
     accent: "cyan",
