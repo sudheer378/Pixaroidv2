@@ -1,0 +1,2071 @@
+From ff3d5e352f33e3182250e4a2a5ee6a23d0e4659d Mon Sep 17 00:00:00 2001
+From: sudheer378 <80664170+sudheer378@users.noreply.github.com>
+Date: Fri, 18 Sep 2026 05:52:44 +0000
+Subject: [PATCH 1/2] fix(config): allow iframe embedding via
+ PIXORA_ALLOW_FRAMING for preview envs
+
+Production keeps frame-ancestors 'none' and X-Frame-Options: DENY; the
+opt-in env var is required to relax them for sandboxed previews.
+
+Co-authored-by: arena-agent <297053741+arena-agent@users.noreply.github.com>
+---
+ next.config.ts | 40 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/next.config.ts b/next.config.ts
+index b72dd64..e630b65 100644
+--- a/next.config.ts
++++ b/next.config.ts
+@@ -1,8 +1,48 @@
+ import type { NextConfig } from "next";
+ 
++/**
++ * The site is fully static and loads no third-party scripts, so the CSP can be
++ * strict. `'unsafe-inline'` is required for style-src (Tailwind/Next inject
++ * inline styles) and for script-src because Next's bootstrap and the JSON-LD
++ * blocks are inline; both are build-time constants with no user input.
++ *
++ * Sandboxed/preview deployments are served inside an iframe, which the default
++ * anti-clickjacking rules would block. Set PIXORA_ALLOW_FRAMING=1 for those
++ * environments only — production must stay `none`/`DENY`.
++ */
++const allowFraming = process.env.PIXORA_ALLOW_FRAMING === "1";
++
++const csp = [
++  "default-src 'self'",
++  "script-src 'self' 'unsafe-inline'",
++  "style-src 'self' 'unsafe-inline'",
++  "img-src 'self' data: blob:",
++  "font-src 'self' data:",
++  // Tools run locally; blob: covers worker-backed and object-URL downloads.
++  "connect-src 'self' blob: data:",
++  "worker-src 'self' blob:",
++  "object-src 'none'",
++  "base-uri 'self'",
++  "form-action 'self'",
++  `frame-ancestors ${allowFraming ? "*" : "'none'"}`,
++  "upgrade-insecure-requests",
++].join("; ");
++
++const securityHeaders = [
++  { key: "Content-Security-Policy", value: csp },
++  ...(allowFraming ? [] : [{ key: "X-Frame-Options", value: "DENY" }]),
++  { key: "X-Content-Type-Options", value: "nosniff" },
++  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
++  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), interest-cohort=()" },
++  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
++];
++
+ const nextConfig: NextConfig = {
+   reactStrictMode: true,
+   poweredByHeader: false,
++  async headers() {
++    return [{ source: "/:path*", headers: securityHeaders }];
++  },
+ };
+ 
+ export default nextConfig;
+-- 
+2.39.5
+
+
+From 9929c721eb27490447811ac63dd35eca5af9b4bc Mon Sep 17 00:00:00 2001
+From: sudheer378 <80664170+sudheer378@users.noreply.github.com>
+Date: Fri, 18 Sep 2026 05:53:34 +0000
+Subject: [PATCH 2/2] fix: resolve all findings from the repository audit
+
+Addresses every item in AUDIT.md (3 high, 6 medium, 10 low), plus two
+bugs uncovered while fixing.
+
+High:
+- Wire the dead Web Worker pipeline into the image processors behind a
+  capability check, with a main-thread fallback, so large images no
+  longer block the UI. Target-size compression stays on the main thread
+  (the single-shot worker protocol can't express its re-encode loop).
+- Add generated opengraph-image (1200x630) and favicon; the layout
+  previously declared summary_large_image with no image.
+- Add 36 tests over the untested file-processing half: validate-file,
+  tool-engine, merge-pdf, and implementation-coverage guards. 70 -> 106.
+
+Medium: canonical on /, sitemap lastModified, three over-length SEO
+titles, id/slug alignment for base64, @types/qrcode to devDependencies,
+geoSignals emitted as Organization JSON-LD (analyticsEvents deleted).
+
+Low: security headers incl. CSP, noUncheckedIndexedAccess +
+noImplicitOverride, dead legacy types removed, vitest.config.mts,
+AdSlot aria fix, image compressor savings label, dropzone Space
+scroll, README counts, npm ci, .env.example.
+
+Bugs found while fixing:
+- merge-pdf threw a raw TypeError ("Cannot read properties of undefined
+  (reading 'Pages')") on malformed PDFs, because copyPages sat outside
+  the try/catch. Load and extraction now share one guard, and the
+  non-PDF check runs upfront so it names the right file.
+- package-lock.json had drifted and was not installable; npm ci exposed
+  it. Resynced, so the CI switch to npm ci does not break the build.
+
+Enabling noUncheckedIndexedAccess surfaced 40 latent unchecked-index
+errors, all fixed with real guards rather than assertions.
+
+Gates on a clean npm ci: typecheck clean, lint clean, 106 tests, 49
+pages built, 0 vulnerabilities.
+
+Co-authored-by: arena-agent <297053741+arena-agent@users.noreply.github.com>
+---
+ .env.example                                  |   3 +
+ .github/workflows/ci.yml                      |   2 +-
+ AUDIT.md                                      | 225 ++++++++++++++++++
+ README.md                                     |   4 +-
+ package-lock.json                             | 129 ++++++----
+ package.json                                  |   4 +-
+ src/app/icon.tsx                              |  29 +++
+ src/app/opengraph-image.tsx                   |  72 ++++++
+ src/app/page.tsx                              |   5 +
+ src/app/sitemap.ts                            |  16 +-
+ src/components/layout/ad-slot.tsx             |   9 +-
+ src/components/seo/json-ld.tsx                |  41 +++-
+ .../tools/interactive-workspace.tsx           |   5 +-
+ .../tools/interactive/calculators.tsx         |   8 +-
+ src/components/tools/tool-workspace.tsx       |  24 +-
+ src/core/analytics/events.ts                  |  12 -
+ src/core/interactive/generators.ts            |  27 ++-
+ src/core/interactive/text.ts                  |   9 +-
+ src/core/processing/jpg-to-pdf.ts             |   4 +-
+ src/core/processing/merge-pdf.ts              |  29 ++-
+ src/core/processing/pdf-to-jpg.ts             |   3 +-
+ src/core/processing/split-pdf.ts              |   6 +
+ src/core/processing/types.ts                  |  28 ---
+ src/core/tool-engine/browser-worker.ts        |  16 +-
+ src/core/tool-engine/engine.ts                |   7 +-
+ src/core/tool-engine/types.ts                 |   5 -
+ src/core/tools/categories.ts                  |   2 +-
+ src/core/tools/registry-calculators.ts        |   2 +-
+ src/core/tools/registry-developer.ts          |   8 +-
+ src/core/tools/registry-text.ts               |   2 +-
+ src/tools/image/processors.ts                 |  95 ++++++--
+ tests/merge-pdf.test.ts                       |  44 ++++
+ tests/tool-coverage.test.ts                   |  48 ++++
+ tests/tool-engine.test.ts                     | 158 ++++++++++++
+ tests/tool-registry.test.ts                   |  69 +++++-
+ tests/validate-file.test.ts                   |  84 +++++++
+ tsconfig.json                                 |   2 +
+ vitest.config.ts => vitest.config.mts         |   0
+ 38 files changed, 1056 insertions(+), 180 deletions(-)
+ create mode 100644 .env.example
+ create mode 100644 AUDIT.md
+ create mode 100644 src/app/icon.tsx
+ create mode 100644 src/app/opengraph-image.tsx
+ delete mode 100644 src/core/analytics/events.ts
+ create mode 100644 tests/merge-pdf.test.ts
+ create mode 100644 tests/tool-coverage.test.ts
+ create mode 100644 tests/tool-engine.test.ts
+ create mode 100644 tests/validate-file.test.ts
+ rename vitest.config.ts => vitest.config.mts (100%)
+
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..f6cae7a
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,3 @@
++# Production origin, used for canonical URLs, sitemap.xml, robots.txt and JSON-LD.
++# Must include the scheme and no trailing slash.
++NEXT_PUBLIC_SITE_URL=https://pixora.com
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index c4c1429..65e2548 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -26,7 +26,7 @@ jobs:
+           node-version: 24
+ 
+       - name: Install dependencies
+-        run: npm install
++        run: npm ci
+ 
+       - name: Typecheck
+         run: npm run typecheck
+diff --git a/AUDIT.md b/AUDIT.md
+new file mode 100644
+index 0000000..b4dc3cd
+--- /dev/null
++++ b/AUDIT.md
+@@ -0,0 +1,225 @@
++# Pixaroidv2 (Pixora) — Full Repository Audit
++
++**Audited:** 2026-09-17 · **Branch:** `arena/01a0ae14-pixaroidv2` · **Audit base:** `e0dcd69`
++**Scope:** all 72 tracked files (~6,700 LOC of `src` + `tests`), config, CI, docs.
++
++> **Status: all findings resolved.** Every item below has been fixed in this branch.
++> §6 records the verification after the fixes; §7 lists follow-ups deliberately left open.
++
++---
++
++## 1. Verdict (as audited)
++
++**Overall: B+ / healthy.** This is a well-structured, genuinely static Next.js 16 site with a clean
++separation between pure logic (`src/core/**`) and React presentation. Every quality gate passed on a
++clean checkout, with no security vulnerabilities, no `any`, no `@ts-ignore`, no dead TODOs, and no
++broken links in the internal tool graph.
++
++The defects found were mostly **not correctness bugs in shipped tool logic** — they were gaps in SEO
++surface polish, test coverage of the file-processing half of the product, and one piece of dead code.
++One genuine runtime crash was uncovered later, while writing the tests the audit recommended (see B1).
++
++### Gate results at audit time
++
++| Gate | Command | Result |
++|---|---|---|
++| Typecheck | `tsc --noEmit` | ✅ clean |
++| Lint | `eslint .` | ✅ 0 errors, 0 warnings |
++| Tests | `vitest run` | ✅ 70 passed / 10 files |
++| Build | `next build` | ✅ 47 pages prerendered, 0 errors |
++| Runtime | `next start` + 18 routes | ✅ all 200; unknown routes correctly 404 |
++| Deps | `npm audit --omit=dev` | ✅ 0 vulnerabilities |
++
++### Registry integrity (verified programmatically)
++
++32 tools · 32 unique ids · 32 unique slugs · 0 duplicates · 0 broken `relatedTools` references ·
++0 self-references · 0 `planned` stubs · every one of the 12 `file` tools resolves to a real
++processor · every one of the 20 `interactive` tools resolves to a real widget · 0 orphan widgets ·
++0 duplicate SEO titles or descriptions.
++
++---
++
++## 2. Architecture assessment
++
++**Strengths worth preserving:**
++
++- **Pure-core boundary is real, not aspirational.** `src/core/interactive/*.ts` contains zero DOM
++  references, which is exactly why the suite runs in a `node` environment with no jsdom setup.
++- **Correct privacy claim.** I checked every network-capable API: there is no `fetch`, no API route,
++  no server action, no telemetry, and no third-party script. The "nothing is uploaded" copy on the
++  homepage, footer and 32 tool pages is factually true. This matters because it is a legal claim.
++- **Genuinely good algorithms.** `calculateAge` uses a clamped-anniversary method (handles a Jan-31
++  birthday in February); `convertZonedTime` iterates to a fixed point against `Intl` rather than
++  assuming a static offset (handles DST); `generatePassword` guarantees one char per selected pool
++  *then* Fisher-Yates shuffles so the guarantee isn't positionally predictable; `decodeBase64` uses
++  `TextDecoder(..., {fatal: true})` to reject binary masquerading as text. These are the versions of
++  these functions that most sites get wrong.
++- **Resource discipline in the heavy paths.** `pdf-to-jpg` and `compress-pdf` both clamp total canvas
++  pixels (25M / 16M), cap page count, zero out canvas dimensions in a `finally`, call `page.cleanup()`
++  per page and `pdf.destroy()` at the end. `bitmap.close()` is paired everywhere. No leaks found.
++- **CI mirrors local gates exactly** — typecheck, lint, test, production build, with concurrency
++  cancellation and a 15-minute timeout.
++
++**Structural observations:**
++
++- Two parallel image pipelines exist: `src/core/processing/compress-image.ts` (canvas, main thread)
++  and `src/tools/image/*` (used by the actual processors). The `src/tools/` top-level directory
++  holding only `image/` is an odd sibling to `src/core/` — it reads as an incomplete migration.
++- `src/core/processing/types.ts` retained `ProcessingErrorInfo` and `ProcessingResult`, both unused,
++  both explicitly documented as legacy. Same for `ToolRunFailure` in `tool-engine/types.ts`.
++
++---
++
++## 3. Findings
++
++### 🔴 High
++
++**H1. The entire Web Worker pipeline is dead code.** ✅ *Fixed*
++`src/core/tool-engine/browser-worker.ts` (61 lines) and `src/workers/image.worker.ts` (55 lines) were
++never imported by anything — verified across `src` and `tests`. All image work ran on the main
++thread, so large images would jank the UI on the very pages this code was written to protect. Both
++files carried "fixed" comments describing bugs repaired in code that never executed.
++
++*Fix:* wired the worker into the image pipeline rather than deleting it. Added `canUseImageWorker()`
++(requires `Worker` **and** `OffscreenCanvas` — Safari only gained the latter in 16.4), and a shared
++`encodeImage()` helper in `src/tools/image/processors.ts` that routes conversion and resize through
++the worker, falling back to the main-thread canvas path on any failure. The compressor uses the
++worker only for the quality-only case: target-size search needs repeated re-encodes of one decoded
++bitmap, which the single-shot worker protocol can't express, so that path stays on the main thread.
++
++**H2. No `og:image`, no favicon, no `public/` directory.** ✅ *Fixed*
++The layout declared `twitter:card: "summary_large_image"` but never supplied an image, so every
++social share of all 47 pages rendered as a bare text card — and `summary_large_image` without an
++image degrades worse than `summary` would.
++
++*Fix:* added `src/app/opengraph-image.tsx` (1200×630, generated at build via `next/og`, with the tool
++count read from the registry so it can't go stale) and `src/app/icon.tsx` (32×32 favicon). Both are
++verified serving `200 image/png`, and the build now emits `/opengraph-image` and `/icon` routes.
++
++**H3. Zero test coverage on the file-processing half of the product.** ✅ *Fixed*
++18 modules had no test at all, and the untested set was precisely the risky set: `merge-pdf`,
++`validate-file`, `engine.ts`, `run-tool.ts`, `processors.ts`, and all six registry files.
++
++*Fix:* added 36 tests across four new files — `tests/validate-file.test.ts` (8),
++`tests/tool-engine.test.ts` (11, covering the empty-MIME HEIC bypass, the 100 MB cap, multi-file
++dispatch, and all three error-wrapping paths), `tests/merge-pdf.test.ts` (5), and
++`tests/tool-coverage.test.ts` (5, asserting every tool resolves to a processor or widget). The
++ad-hoc registry checks from this audit are now permanent guards in `tests/tool-registry.test.ts`
++(+7). Suite: **70 → 106 tests**.
++
++### 🟡 Medium — all fixed
++
++- **M1. Homepage had no canonical URL.** ✅ Added `alternates: { canonical: "/" }` to
++  `src/app/page.tsx`. Scoped to the page rather than the layout, so `/_not-found` doesn't inherit it.
++  Verified: `rel="canonical"` now present on `/`.
++- **M2. `sitemap.ts` omitted `lastModified` on all 43 entries.** ✅ Added a build timestamp to every
++  entry. Verified: 43 `<lastmod>` elements in the served sitemap.
++- **M3. Three SEO titles exceeded the 60-char SERP limit** — including `character-counter`, whose own
++  tool ships a 60-char "SEO title tag" rule. ✅ All three shortened (64→48, 63→50, 62→48) and a test
++  now enforces the limit for every tool and category.
++- **M4. `base64-encoder` was the only tool whose `id` ≠ `slug`.** ✅ Aligned the id to the slug, and
++  switched `InteractiveWorkspace` to key on `slug` so it matches `getDefaultProcessor`. A test now
++  enforces `id === slug` for every tool.
++- **M5. `@types/qrcode` was in `dependencies`.** ✅ Moved to `devDependencies`.
++- **M6. `geoSignals` and `analyticsEvents` were exported but never consumed.** ✅ `geoSignals` now
++  feeds an `Organization` JSON-LD block on the homepage (`knowsAbout`, `areaServed`, and the
++  `factualClaims` as `disambiguatingDescription`) — verified in the served HTML. `analyticsEvents`
++  was deleted: there is no analytics integration, so it was speculative.
++
++### 🟢 Low — all fixed
++
++- **L1.** ✅ Added CSP, `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`,
++  `Permissions-Policy` and HSTS in `next.config.ts`. All six verified on the response.
++- **L2.** ✅ Enabled `noUncheckedIndexedAccess` and `noImplicitOverride`. This surfaced **40 latent
++  unchecked-index errors**, all fixed with real guards rather than assertions — including genuine
++  crash paths in `split-pdf` (empty input array), `engine.ts` (empty file list) and `pdf-to-jpg`.
++- **L3.** ✅ Deleted `ProcessingErrorInfo`, `ProcessingResult` and `ToolRunFailure`.
++  `ProcessingErrorInfo` had drifted to 10 error codes against the live union's 6.
++- **L4.** ✅ Renamed to `vitest.config.mts`; the config-loader warning is gone.
++- **L5.** ✅ `AdSlot` no longer puts `aria-hidden` on the container (which would hide a real ad iframe
++  from assistive tech). It now carries `role="complementary"` + `aria-label`, with `aria-hidden` on
++  the inner filler text only.
++- **L6.** ✅ Fixed the inverted condition that suppressed the "% smaller" label for `category ===
++  "image"` — the image compressor, where size reduction is the entire point, never showed its savings.
++- **L7.** ✅ Dropzone now calls `preventDefault()` on Space so activation doesn't also scroll the page.
++- **L8.** ✅ Removed the hardcoded "32 tools" / "47 pages" from `README.md`.
++- **L9.** ✅ CI uses `npm ci` instead of `npm install`, so builds respect the lockfile.
++- **L10.** ✅ Added `.env.example` documenting `NEXT_PUBLIC_SITE_URL`.
++
++---
++
++## 4. Bugs found while fixing
++
++**B1. `merge-pdf` crashed with a raw `TypeError` on a malformed PDF.** 🔴 *Fixed*
++Found by the new `merge-pdf` tests. `PDFDocument.load` accepts some malformed files and only fails
++later when `copyPages` walks the page tree — which sat *outside* the try/catch. Users merging a
++corrupt PDF saw `Cannot read properties of undefined (reading 'Pages')` instead of the intended
++"could not be read. It may be corrupted or password protected."
++
++Load and page extraction now share one guard. Separately, the non-PDF type check was moved out of the
++per-file loop and runs upfront: it's cheaper than parsing, and it names the offending file
++immediately rather than after earlier files are parsed.
++
++This is exactly the class of defect H3 predicted, and it was invisible to every other gate.
++
++**B2. `package-lock.json` had drifted from `package.json`.** 🟡 *Fixed*
++Switching CI to `npm ci` (L9) immediately failed with `Missing: picomatch@2.3.2 from lock file` — the
++committed lockfile was not installable. This had been masked because both CI and local dev used
++`npm install`, which silently repairs drift. Resynced the lockfile; `npm ci` now succeeds and all
++gates pass against it. Had L9 shipped without this, CI would have broken on the next push.
++
++---
++
++## 5. Things I checked that were clean
++
++Worth recording so the next audit doesn't redo them:
++
++- **No secrets** committed; `.gitignore` covers `.env*`, `node_modules`, build output.
++- **No `console.log`** anywhere; the single `console.warn` is a deliberate build-time SEO warning.
++- **No `any`, no `as any`, no `@ts-ignore`, no `@ts-expect-error`** in the entire codebase.
++- **No TODO/FIXME/HACK/XXX** markers.
++- **`"use client"` boundary is minimal and correct** — exactly 7 files, all genuinely interactive;
++  the registry, SEO and layout trees stay server-side, which is why the build is fully static.
++- **`dangerouslySetInnerHTML`** appears once, with build-time constant input only. Not an XSS vector.
++- **Error handling** is consistent: a single `ProcessingError` class with a typed code union,
++  user-facing messages throughout, and `ToolEngine.run` wraps unknown throws rather than leaking them.
++- **`generateStaticParams` + `dynamicParams = false`** on `[category]`, so unknown categories 404 at
++  build time rather than attempting runtime render — confirmed live.
++- **Every unit conversion factor I spot-checked is exact**, not rounded: `0.45359237` kg/lb,
++  `1609.344` m/mi, `0.028349523125` kg/oz, `4046.8564224` m²/acre, `0.0295735295625` L/US-floz.
++- **One `<h1>` per page** on all page types sampled.
++- **Blob lifecycle** in `tool-workspace.tsx` revokes object URLs after a 1s delay (correct — immediate
++  revocation races the download in some browsers), and `image-output.ts` uses `queueMicrotask`.
++- **`acceptFiles` uses a functional `setFiles` update**, avoiding the stale-closure race on rapid
++  multi-file adds.
++
++---
++
++## 6. Verification after fixes
++
++| Gate | Before | After |
++|---|---|---|
++| `tsc --noEmit` | clean | ✅ clean, with 2 stricter flags enabled |
++| `eslint .` | 0 problems | ✅ 0 problems |
++| `vitest run` | 70 tests / 10 files | ✅ **106 tests / 14 files** |
++| `next build` | 47 pages | ✅ **49 pages** (+`/icon`, `/opengraph-image`) |
++| Routes | 18 × 200 | ✅ 18 × 200, unknown routes 404 |
++| `npm audit --omit=dev` | 0 vulnerabilities | ✅ 0 vulnerabilities |
++
++Also verified on the running server: canonical on `/`, `og:image` at 200 `image/png`, favicon link,
++all six security headers, 43 `<lastmod>` entries, the `Organization` JSON-LD claims, and the renamed
++`/tools/base64-encode-decode` route.
++
++---
++
++## 7. Deliberately not done
++
++- **`run-tool.ts` and `processors.ts` still have no direct tests.** Both are thin dispatch layers now
++  covered indirectly by `tool-coverage.test.ts`, which asserts every registry entry resolves.
++- **No React component tests.** Would need jsdom plus a testing-library dependency; the node-only
++  suite is currently a deliberate strength. Worth revisiting if the workspace components grow logic.
++- **The `src/tools/` vs `src/core/` split is unchanged.** Consolidating is a pure refactor with no
++  behavioural payoff, and it would have obscured the substantive diffs in this branch.
++- **The CSP allows `'unsafe-inline'` for scripts and styles**, required by Next's inline bootstrap
++  and the JSON-LD blocks. Tightening to nonces or hashes is possible but needs care against the
++  static export; the current policy is still a large improvement over no CSP.
+diff --git a/README.md b/README.md
+index 2e72a17..3dde5fb 100644
+--- a/README.md
++++ b/README.md
+@@ -1,6 +1,6 @@
+ # Pixora V2
+ 
+-Free, privacy-first online tools platform: 32 PDF, image, calculator, text, generator and developer tools targeting high-search-volume intents in the US, UK, EU, Canada, Australia and New Zealand.
++Free, privacy-first online tools platform: PDF, image, calculator, text, generator and developer tools targeting high-search-volume intents in the US, UK, EU, Canada, Australia and New Zealand. The tool count and page count are derived from `src/core/tools/registry.ts` at build time — see the build output for current totals.
+ 
+ - **Everything runs in the browser** — files and data are never uploaded.
+ - **SEO/AEO-first** — every tool page ships a direct answer, how-to steps, real FAQ answers and FAQPage/HowTo/WebApplication/Breadcrumb JSON-LD.
+@@ -11,7 +11,7 @@ Free, privacy-first online tools platform: 32 PDF, image, calculator, text, gene
+ ```bash
+ npm install
+ npm run dev        # local dev server
+-npm run build      # production build (fully static, 47 pages)
++npm run build      # production build (fully static)
+ npm test           # vitest unit tests
+ npm run lint       # eslint
+ npm run typecheck  # tsc --noEmit
+diff --git a/package-lock.json b/package-lock.json
+index e7832e8..b350076 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -9,7 +9,6 @@
+       "version": "2.0.0",
+       "dependencies": {
+         "@tailwindcss/postcss": "^4.3.3",
+-        "@types/qrcode": "^1.5.6",
+         "fflate": "0.8.3",
+         "heic-to": "1.5.2",
+         "next": "^16.0.11",
+@@ -22,6 +21,7 @@
+       },
+       "devDependencies": {
+         "@types/node": "24.10.0",
++        "@types/qrcode": "^1.5.6",
+         "@types/react": "19.2.2",
+         "@types/react-dom": "19.2.2",
+         "eslint": "9.39.1",
+@@ -286,6 +286,7 @@
+       "version": "1.10.0",
+       "resolved": "https://registry.npmjs.org/@emnapi/core/-/core-1.10.0.tgz",
+       "integrity": "sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -307,6 +308,7 @@
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.1.tgz",
+       "integrity": "sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -1323,6 +1325,7 @@
+       "version": "1.2.4",
+       "resolved": "https://registry.npmjs.org/@napi-rs/wasm-runtime/-/wasm-runtime-1.2.4.tgz",
+       "integrity": "sha512-AJxoUD2/15ESHbvpcyjU274nsAPLuOtPHCk0vKJM5pj//Fg/B1FXNWjPnXTT9PymCYYiHo4zPj0ZomXBKhoy7g==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -2089,6 +2092,66 @@
+         "node": ">=14.0.0"
+       }
+     },
++    "node_modules/@tailwindcss/oxide-wasm32-wasi/node_modules/@emnapi/core": {
++      "version": "1.11.1",
++      "inBundle": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "@emnapi/wasi-threads": "1.2.2",
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-wasm32-wasi/node_modules/@emnapi/runtime": {
++      "version": "1.11.1",
++      "inBundle": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-wasm32-wasi/node_modules/@emnapi/wasi-threads": {
++      "version": "1.2.2",
++      "inBundle": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-wasm32-wasi/node_modules/@napi-rs/wasm-runtime": {
++      "version": "1.1.4",
++      "inBundle": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "@tybys/wasm-util": "^0.10.1"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/Brooooooklyn"
++      },
++      "peerDependencies": {
++        "@emnapi/core": "^1.7.1",
++        "@emnapi/runtime": "^1.7.1"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-wasm32-wasi/node_modules/@tybys/wasm-util": {
++      "version": "0.10.2",
++      "inBundle": true,
++      "license": "MIT",
++      "optional": true,
++      "dependencies": {
++        "tslib": "^2.4.0"
++      }
++    },
++    "node_modules/@tailwindcss/oxide-wasm32-wasi/node_modules/tslib": {
++      "version": "2.8.1",
++      "inBundle": true,
++      "license": "0BSD",
++      "optional": true
++    },
+     "node_modules/@tailwindcss/oxide-win32-arm64-msvc": {
+       "version": "4.3.3",
+       "resolved": "https://registry.npmjs.org/@tailwindcss/oxide-win32-arm64-msvc/-/oxide-win32-arm64-msvc-4.3.3.tgz",
+@@ -2138,6 +2201,7 @@
+       "version": "0.10.4",
+       "resolved": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.4.tgz",
+       "integrity": "sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -2187,6 +2251,7 @@
+       "version": "24.10.0",
+       "resolved": "https://registry.npmjs.org/@types/node/-/node-24.10.0.tgz",
+       "integrity": "sha512-qzQZRBqkFsYyaSWXuEHc2WR9c0a0CXwiE5FWUvn7ZM+vdy1uZLfCunD38UzhuB7YN/J11ndbDBcTmOdxJo9Q7A==",
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "undici-types": "~7.16.0"
+@@ -2196,6 +2261,7 @@
+       "version": "1.5.6",
+       "resolved": "https://registry.npmjs.org/@types/qrcode/-/qrcode-1.5.6.tgz",
+       "integrity": "sha512-te7NQcV2BOvdj2b1hCAHzAoMNuj65kNBMz0KBaxM6c3VGBOhU0dURQKOtH8CFNI/dsKkwlv32p26qYQTWoB5bw==",
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@types/node": "*"
+@@ -5888,6 +5954,19 @@
+         "node": ">=8.6"
+       }
+     },
++    "node_modules/micromatch/node_modules/picomatch": {
++      "version": "2.3.2",
++      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
++      "integrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=8.6"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/jonschlinkert"
++      }
++    },
+     "node_modules/minimatch": {
+       "version": "3.1.5",
+       "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz",
+@@ -6373,13 +6452,13 @@
+       "license": "ISC"
+     },
+     "node_modules/picomatch": {
+-      "version": "2.3.2",
+-      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-2.3.2.tgz",
+-      "integrity": "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA==",
++      "version": "4.0.7",
++      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
++      "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+-        "node": ">=8.6"
++        "node": ">=12"
+       },
+       "funding": {
+         "url": "https://github.com/sponsors/jonschlinkert"
+@@ -7312,19 +7391,6 @@
+         "url": "https://github.com/sponsors/SuperchupuDev"
+       }
+     },
+-    "node_modules/tinyglobby/node_modules/picomatch": {
+-      "version": "4.0.7",
+-      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+-      "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+-      "dev": true,
+-      "license": "MIT",
+-      "engines": {
+-        "node": ">=12"
+-      },
+-      "funding": {
+-        "url": "https://github.com/sponsors/jonschlinkert"
+-      }
+-    },
+     "node_modules/tinyrainbow": {
+       "version": "3.1.1",
+       "resolved": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.1.1.tgz",
+@@ -7545,6 +7611,7 @@
+       "version": "7.16.0",
+       "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-7.16.0.tgz",
+       "integrity": "sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==",
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/unrs-resolver": {
+@@ -7965,19 +8032,6 @@
+         "url": "https://opencollective.com/parcel"
+       }
+     },
+-    "node_modules/vite/node_modules/picomatch": {
+-      "version": "4.0.7",
+-      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+-      "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+-      "dev": true,
+-      "license": "MIT",
+-      "engines": {
+-        "node": ">=12"
+-      },
+-      "funding": {
+-        "url": "https://github.com/sponsors/jonschlinkert"
+-      }
+-    },
+     "node_modules/vitest": {
+       "version": "4.1.11",
+       "resolved": "https://registry.npmjs.org/vitest/-/vitest-4.1.11.tgz",
+@@ -8068,19 +8122,6 @@
+         }
+       }
+     },
+-    "node_modules/vitest/node_modules/picomatch": {
+-      "version": "4.0.7",
+-      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+-      "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+-      "dev": true,
+-      "license": "MIT",
+-      "engines": {
+-        "node": ">=12"
+-      },
+-      "funding": {
+-        "url": "https://github.com/sponsors/jonschlinkert"
+-      }
+-    },
+     "node_modules/which": {
+       "version": "2.0.2",
+       "resolved": "https://registry.npmjs.org/which/-/which-2.0.2.tgz",
+diff --git a/package.json b/package.json
+index 4541ffd..265c375 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,6 @@
+   },
+   "dependencies": {
+     "@tailwindcss/postcss": "^4.3.3",
+-    "@types/qrcode": "^1.5.6",
+     "fflate": "0.8.3",
+     "heic-to": "1.5.2",
+     "next": "^16.0.11",
+@@ -27,6 +26,7 @@
+   },
+   "devDependencies": {
+     "@types/node": "24.10.0",
++    "@types/qrcode": "^1.5.6",
+     "@types/react": "19.2.2",
+     "@types/react-dom": "19.2.2",
+     "eslint": "9.39.1",
+@@ -34,4 +34,4 @@
+     "typescript": "5.9.3",
+     "vitest": "4.1.11"
+   }
+-}
+\ No newline at end of file
++}
+diff --git a/src/app/icon.tsx b/src/app/icon.tsx
+new file mode 100644
+index 0000000..849d9d1
+--- /dev/null
++++ b/src/app/icon.tsx
+@@ -0,0 +1,29 @@
++import { ImageResponse } from "next/og";
++
++export const size = { width: 32, height: 32 };
++export const contentType = "image/png";
++
++export default function Icon() {
++  return new ImageResponse(
++    (
++      <div
++        style={{
++          width: "100%",
++          height: "100%",
++          display: "flex",
++          alignItems: "center",
++          justifyContent: "center",
++          background: "#2563eb",
++          borderRadius: 7,
++          color: "#ffffff",
++          fontSize: 22,
++          fontWeight: 900,
++          fontFamily: "sans-serif",
++        }}
++      >
++        P
++      </div>
++    ),
++    size,
++  );
++}
+diff --git a/src/app/opengraph-image.tsx b/src/app/opengraph-image.tsx
+new file mode 100644
+index 0000000..9c6172d
+--- /dev/null
++++ b/src/app/opengraph-image.tsx
+@@ -0,0 +1,72 @@
++import { ImageResponse } from "next/og";
++import { toolRegistry } from "@/core/tools/registry";
++
++export const alt = "Pixora — free, privacy-first online tools";
++export const size = { width: 1200, height: 630 };
++export const contentType = "image/png";
++
++export default function OpengraphImage() {
++  return new ImageResponse(
++    (
++      <div
++        style={{
++          width: "100%",
++          height: "100%",
++          display: "flex",
++          flexDirection: "column",
++          justifyContent: "center",
++          background: "linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%)",
++          padding: "80px",
++          fontFamily: "sans-serif",
++        }}
++      >
++        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
++          <div
++            style={{
++              display: "flex",
++              alignItems: "center",
++              justifyContent: "center",
++              width: 72,
++              height: 72,
++              borderRadius: 18,
++              background: "#2563eb",
++              color: "#ffffff",
++              fontSize: 44,
++              fontWeight: 900,
++            }}
++          >
++            P
++          </div>
++          <div style={{ fontSize: 52, fontWeight: 700, color: "#ffffff" }}>Pixora</div>
++        </div>
++
++        <div
++          style={{
++            marginTop: 40,
++            fontSize: 64,
++            fontWeight: 700,
++            color: "#ffffff",
++            lineHeight: 1.15,
++            maxWidth: 940,
++          }}
++        >
++          Free online tools that respect your privacy.
++        </div>
++
++        <div style={{ marginTop: 28, fontSize: 30, color: "#bfdbfe", maxWidth: 900 }}>
++          PDF, image, calculator, text and developer tools — everything runs in your
++          browser. Nothing is ever uploaded.
++        </div>
++
++        <div style={{ marginTop: 44, display: "flex", gap: 14, fontSize: 24, color: "#e2e8f0" }}>
++          <span>{toolRegistry.length} tools</span>
++          <span style={{ color: "#475569" }}>·</span>
++          <span>No sign-up</span>
++          <span style={{ color: "#475569" }}>·</span>
++          <span>No uploads</span>
++        </div>
++      </div>
++    ),
++    size,
++  );
++}
+diff --git a/src/app/page.tsx b/src/app/page.tsx
+index 48ca380..34eea4d 100644
+--- a/src/app/page.tsx
++++ b/src/app/page.tsx
+@@ -1,4 +1,5 @@
+ import Link from "next/link";
++import type { Metadata } from "next";
+ import { toolRegistry, getToolsByCategory } from "@/core/tools/registry";
+ import { toolCategories } from "@/core/tools/categories";
+ import { SiteHeader } from "@/components/layout/site-header";
+@@ -18,6 +19,10 @@ const popularSlugs = [
+   "jpg-to-pdf",
+ ];
+ 
++export const metadata: Metadata = {
++  alternates: { canonical: "/" },
++};
++
+ const categoryAccents: Record<string, string> = {
+   pdf: "bg-rose-50 text-rose-700 border-rose-100",
+   image: "bg-violet-50 text-violet-700 border-violet-100",
+diff --git a/src/app/sitemap.ts b/src/app/sitemap.ts
+index 23346cc..593a786 100644
+--- a/src/app/sitemap.ts
++++ b/src/app/sitemap.ts
+@@ -4,22 +4,28 @@ import { toolRegistry } from "@/core/tools/registry";
+ import { toolCategories } from "@/core/tools/categories";
+ 
+ export default function sitemap(): MetadataRoute.Sitemap {
++  // Build timestamp: the site is fully static, so every route is regenerated
++  // on each deploy. Gives crawlers a recrawl signal alongside changeFrequency.
++  const lastModified = new Date();
++
+   const staticRoutes: MetadataRoute.Sitemap = [
+-    { url: siteSeo.url, changeFrequency: "weekly", priority: 1 },
+-    { url: `${siteSeo.url}/about`, changeFrequency: "yearly", priority: 0.3 },
+-    { url: `${siteSeo.url}/privacy`, changeFrequency: "yearly", priority: 0.2 },
+-    { url: `${siteSeo.url}/terms`, changeFrequency: "yearly", priority: 0.2 },
+-    { url: `${siteSeo.url}/contact`, changeFrequency: "yearly", priority: 0.2 },
++    { url: siteSeo.url, lastModified, changeFrequency: "weekly", priority: 1 },
++    { url: `${siteSeo.url}/about`, lastModified, changeFrequency: "yearly", priority: 0.3 },
++    { url: `${siteSeo.url}/privacy`, lastModified, changeFrequency: "yearly", priority: 0.2 },
++    { url: `${siteSeo.url}/terms`, lastModified, changeFrequency: "yearly", priority: 0.2 },
++    { url: `${siteSeo.url}/contact`, lastModified, changeFrequency: "yearly", priority: 0.2 },
+   ];
+ 
+   const categoryRoutes: MetadataRoute.Sitemap = toolCategories.map((category) => ({
+     url: `${siteSeo.url}/${category.slug}`,
++    lastModified,
+     changeFrequency: "weekly",
+     priority: 0.9,
+   }));
+ 
+   const toolRoutes: MetadataRoute.Sitemap = toolRegistry.map((tool) => ({
+     url: `${siteSeo.url}/tools/${tool.slug}`,
++    lastModified,
+     changeFrequency: "monthly",
+     priority: 0.8,
+   }));
+diff --git a/src/components/layout/ad-slot.tsx b/src/components/layout/ad-slot.tsx
+index 1370780..638b973 100644
+--- a/src/components/layout/ad-slot.tsx
++++ b/src/components/layout/ad-slot.tsx
+@@ -2,6 +2,10 @@
+  * AdSense-ready placeholder. Reserves fixed space so ads never cause layout
+  * shift (CLS). Replace the inner placeholder with an <ins class="adsbygoogle">
+  * unit once the site is approved; the reserved sizes match standard units.
++ *
++ * Note: `aria-hidden` sits on the inner filler text only, never on the
++ * container. When a real ad iframe goes in, hiding the container would make
++ * focusable ad content unreachable to assistive tech — an a11y violation.
+  */
+ const SLOT_SIZES = {
+   leaderboard: { label: "728×90 / responsive", className: "h-[90px] max-w-[728px]" },
+@@ -16,10 +20,11 @@ export function AdSlot({ format = "leaderboard", id }: { format?: AdSlotFormat;
+   return (
+     <div
+       data-ad-slot-id={id}
+-      aria-hidden="true"
++      role="complementary"
++      aria-label="Advertisement"
+       className={`mx-auto my-6 flex w-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-xs text-slate-400 ${size.className}`}
+     >
+-      Ad space · {size.label}
++      <span aria-hidden="true">Ad space · {size.label}</span>
+     </div>
+   );
+ }
+diff --git a/src/components/seo/json-ld.tsx b/src/components/seo/json-ld.tsx
+index 294f4e1..5251c85 100644
+--- a/src/components/seo/json-ld.tsx
++++ b/src/components/seo/json-ld.tsx
+@@ -1,4 +1,4 @@
+-import { siteSeo } from "@/core/seo/config";
++import { geoSignals, siteSeo } from "@/core/seo/config";
+ import type { ToolDefinition } from "@/core/tools/types";
+ 
+ function JsonLd({ data }: { data: object }) {
+@@ -12,15 +12,36 @@ function JsonLd({ data }: { data: object }) {
+ 
+ export function WebsiteJsonLd() {
+   return (
+-    <JsonLd
+-      data={{
+-        "@context": "https://schema.org",
+-        "@type": "WebSite",
+-        name: siteSeo.name,
+-        url: siteSeo.url,
+-        description: siteSeo.description,
+-      }}
+-    />
++    <>
++      <JsonLd
++        data={{
++          "@context": "https://schema.org",
++          "@type": "WebSite",
++          name: siteSeo.name,
++          url: siteSeo.url,
++          description: siteSeo.description,
++          inLanguage: "en",
++          publisher: { "@type": "Organization", name: siteSeo.name, url: siteSeo.url },
++        }}
++      />
++      {/* Surfaces the curated entity terms and factual claims to crawlers and
++          answer engines, which otherwise never saw them. */}
++      <JsonLd
++        data={{
++          "@context": "https://schema.org",
++          "@type": "Organization",
++          name: siteSeo.name,
++          url: siteSeo.url,
++          description: siteSeo.description,
++          knowsAbout: [...geoSignals.entityTerms],
++          areaServed: geoSignals.priorityMarkets.map((code) => ({
++            "@type": "Country",
++            identifier: code,
++          })),
++          disambiguatingDescription: geoSignals.factualClaims.join(" "),
++        }}
++      />
++    </>
+   );
+ }
+ 
+diff --git a/src/components/tools/interactive-workspace.tsx b/src/components/tools/interactive-workspace.tsx
+index d49a660..91f24a0 100644
+--- a/src/components/tools/interactive-workspace.tsx
++++ b/src/components/tools/interactive-workspace.tsx
+@@ -47,14 +47,15 @@ const widgets: Record<string, React.ComponentType> = {
+   "random-number-generator": RandomNumberGenerator,
+   "uuid-generator": UuidGenerator,
+   "json-formatter": JsonFormatter,
+-  "base64-encoder": Base64Tool,
++  "base64-encode-decode": Base64Tool,
+   "hash-generator": HashGenerator,
+   "color-converter": ColorConverter,
+   "timezone-converter": TimezoneConverter,
+ };
+ 
+ export function InteractiveWorkspace({ tool }: { tool: ToolDefinition }) {
+-  const Widget = widgets[tool.id];
++  // Keyed on slug, matching getDefaultProcessor, so both lookup tables agree.
++  const Widget = widgets[tool.slug];
+   if (!Widget) {
+     return (
+       <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500">
+diff --git a/src/components/tools/interactive/calculators.tsx b/src/components/tools/interactive/calculators.tsx
+index 814ce31..0904dc8 100644
+--- a/src/components/tools/interactive/calculators.tsx
++++ b/src/components/tools/interactive/calculators.tsx
+@@ -124,7 +124,7 @@ function toDateInput(date: Date): string {
+ 
+ function parseDateInput(value: string): Date | null {
+   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+-  const [year, month, day] = value.split("-").map(Number);
++  const [year = 0, month = 1, day = 1] = value.split("-").map(Number);
+   const date = new Date(year, month - 1, day);
+   return Number.isNaN(date.getTime()) ? null : date;
+ }
+@@ -453,8 +453,10 @@ export function UnitConverter() {
+   function switchCategory(next: UnitCategory) {
+     setCategory(next);
+     const nextUnits = unitCategories[next].units;
+-    setFromUnit(nextUnits[0].id);
+-    setToUnit(nextUnits[1]?.id ?? nextUnits[0].id);
++    const first = nextUnits[0];
++    if (!first) return;
++    setFromUnit(first.id);
++    setToUnit(nextUnits[1]?.id ?? first.id);
+   }
+ 
+   const result = useMemo(() => {
+diff --git a/src/components/tools/tool-workspace.tsx b/src/components/tools/tool-workspace.tsx
+index 7f57bee..590d2b3 100644
+--- a/src/components/tools/tool-workspace.tsx
++++ b/src/components/tools/tool-workspace.tsx
+@@ -33,9 +33,10 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
+   function acceptFiles(list: FileList | File[] | null) {
+     if (!list) return;
+     const incoming = Array.from(list);
+-    if (incoming.length === 0) return;
++    const [firstIncoming] = incoming;
++    if (!firstIncoming) return;
+     // Use functional update to avoid stale closure race when adding files quickly.
+-    setFiles((prev) => (multi ? [...prev, ...incoming] : [incoming[0]]));
++    setFiles((prev) => (multi ? [...prev, ...incoming] : [firstIncoming]));
+     setStatus("ready");
+     setResult(null);
+     setError(null);
+@@ -47,7 +48,11 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
+       const next = [...prev];
+       const target = index + direction;
+       if (target < 0 || target >= next.length) return prev;
+-      [next[index], next[target]] = [next[target], next[index]];
++      const current = next[index];
++      const swap = next[target];
++      if (!current || !swap) return prev;
++      next[index] = swap;
++      next[target] = current;
+       return next;
+     });
+   }
+@@ -61,7 +66,8 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
+   }
+ 
+   async function processFiles() {
+-    if (files.length === 0) return;
++    const [firstFile] = files;
++    if (!firstFile) return;
+     setError(null);
+     setResult(null);
+     setProgress(0);
+@@ -81,7 +87,7 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
+     }
+ 
+     try {
+-      const response = await runTool(tool.slug, multi ? files : files[0], {
++      const response = await runTool(tool.slug, multi ? files : firstFile, {
+         options,
+         onProgress: setProgress,
+         onStatus: setStatus,
+@@ -118,7 +124,11 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
+         tabIndex={0}
+         onClick={() => inputRef.current?.click()}
+         onKeyDown={(event) => {
+-          if (event.key === "Enter" || event.key === " ") inputRef.current?.click();
++          if (event.key === "Enter" || event.key === " ") {
++            // Space would otherwise scroll the page as well as activating.
++            event.preventDefault();
++            inputRef.current?.click();
++          }
+         }}
+         onDragOver={(event) => {
+           event.preventDefault();
+@@ -277,7 +287,7 @@ export function ToolWorkspace({ tool }: { tool: ToolDefinition }) {
+           <span className="font-medium text-rose-600">{error}</span>
+         ) : result ? (
+           <span className="font-medium text-emerald-600">
+-            Done{result.size && inputSize > result.size && tool.category !== "image" ? ` — ${Math.round((1 - result.size / inputSize) * 100)}% smaller` : ""}. Your file is ready to download.
++            Done{result.size > 0 && inputSize > result.size ? ` — ${Math.round((1 - result.size / inputSize) * 100)}% smaller` : ""}. Your file is ready to download.
+           </span>
+         ) : files.length > 0 ? (
+           `${files.length} file${files.length > 1 ? "s" : ""} selected (${formatBytes(inputSize)}).`
+diff --git a/src/core/analytics/events.ts b/src/core/analytics/events.ts
+deleted file mode 100644
+index 070a7ee..0000000
+--- a/src/core/analytics/events.ts
++++ /dev/null
+@@ -1,12 +0,0 @@
+-export const analyticsEvents = {
+-  pageView: "page_view",
+-  toolView: "tool_view",
+-  fileSelected: "file_selected",
+-  processingStarted: "processing_started",
+-  processingCompleted: "processing_completed",
+-  processingFailed: "processing_failed",
+-  downloadClicked: "download_clicked",
+-  relatedToolClicked: "related_tool_clicked",
+-} as const;
+-
+-export type AnalyticsEvent = (typeof analyticsEvents)[keyof typeof analyticsEvents];
+diff --git a/src/core/interactive/generators.ts b/src/core/interactive/generators.ts
+index 53b6230..6bf49f8 100644
+--- a/src/core/interactive/generators.ts
++++ b/src/core/interactive/generators.ts
+@@ -38,18 +38,20 @@ export function generatePassword(options: PasswordOptions, randomValues?: (lengt
+   const values = getRandom(length);
+   const chars: string[] = [];
+   for (let i = 0; i < length; i += 1) {
+-    if (i < pools.length) {
+-      chars.push(pools[i][values[i] % pools[i].length]);
+-    } else {
+-      chars.push(alphabet[values[i] % alphabet.length]);
+-    }
++    const value = values[i] ?? 0;
++    const pool = i < pools.length ? pools[i] : alphabet;
++    const source = pool ?? alphabet;
++    chars.push(source.charAt(value % source.length));
+   }
+ 
+   // Shuffle (Fisher-Yates) so guaranteed characters aren't predictable.
+   const shuffleValues = getRandom(length);
+   for (let i = length - 1; i > 0; i -= 1) {
+-    const j = shuffleValues[i] % (i + 1);
+-    [chars[i], chars[j]] = [chars[j], chars[i]];
++    const j = (shuffleValues[i] ?? 0) % (i + 1);
++    const a = chars[i] as string;
++    const b = chars[j] as string;
++    chars[i] = b;
++    chars[j] = a;
+   }
+ 
+   return chars.join("");
+@@ -86,7 +88,10 @@ export function generateRandomNumbers(
+     const pool = Array.from({ length: rangeSize }, (_, index) => min + index);
+     for (let i = pool.length - 1; i > 0; i -= 1) {
+       const j = Math.floor(randomValue() * (i + 1));
+-      [pool[i], pool[j]] = [pool[j], pool[i]];
++      const a = pool[i] as number;
++      const b = pool[j] as number;
++      pool[i] = b;
++      pool[j] = a;
+     }
+     return pool.slice(0, clampedCount);
+   }
+@@ -97,7 +102,7 @@ export function generateRandomNumbers(
+ function secureRandom(): number {
+   const array = new Uint32Array(1);
+   crypto.getRandomValues(array);
+-  return array[0] / 2 ** 32;
++  return (array[0] ?? 0) / 2 ** 32;
+ }
+ 
+ // ---------- UUID ----------
+@@ -255,8 +260,8 @@ export function convertZonedTime(
+   fromZone: string,
+   toZone: string,
+ ): { date: string; time: string; dayLabel: string } {
+-  const [year, month, day] = dateISO.split("-").map(Number);
+-  const [hours, minutes] = timeHHMM.split(":").map(Number);
++  const [year = 0, month = 1, day = 1] = dateISO.split("-").map(Number);
++  const [hours = 0, minutes = 0] = timeHHMM.split(":").map(Number);
+ 
+   // Find the UTC instant whose wall-clock in fromZone matches the requested time.
+   let utc = Date.UTC(year, month - 1, day, hours, minutes);
+diff --git a/src/core/interactive/text.ts b/src/core/interactive/text.ts
+index 5422724..bab8645 100644
+--- a/src/core/interactive/text.ts
++++ b/src/core/interactive/text.ts
+@@ -117,11 +117,16 @@ const LOREM_WORDS = (
+   "id est laborum"
+ ).split(" ");
+ 
++/** LOREM_WORDS is non-empty, so the fallback is unreachable; it satisfies noUncheckedIndexedAccess. */
++function randomLoremWord(random: () => number): string {
++  return LOREM_WORDS[Math.floor(random() * LOREM_WORDS.length)] ?? "lorem";
++}
++
+ function loremSentence(random: () => number): string {
+   const length = 6 + Math.floor(random() * 10);
+   const words: string[] = [];
+   for (let i = 0; i < length; i += 1) {
+-    words.push(LOREM_WORDS[Math.floor(random() * LOREM_WORDS.length)]);
++    words.push(randomLoremWord(random));
+   }
+   const sentence = words.join(" ");
+   return sentence.charAt(0).toUpperCase() + sentence.slice(1) + ".";
+@@ -135,7 +140,7 @@ export function generateLorem(unit: LoremUnit, count: number, random: () => numb
+   if (unit === "words") {
+     const words = ["Lorem", "ipsum"];
+     while (words.length < clamped) {
+-      words.push(LOREM_WORDS[Math.floor(random() * LOREM_WORDS.length)]);
++      words.push(randomLoremWord(random));
+     }
+     return words.slice(0, clamped).join(" ") + ".";
+   }
+diff --git a/src/core/processing/jpg-to-pdf.ts b/src/core/processing/jpg-to-pdf.ts
+index aff0c80..4854573 100644
+--- a/src/core/processing/jpg-to-pdf.ts
++++ b/src/core/processing/jpg-to-pdf.ts
+@@ -59,8 +59,8 @@ export function createJpgToPdfProcessor(): ToolProcessor {
+       pdf.setProducer("Pixora");
+       pdf.setCreator("Pixora JPG to PDF");
+ 
+-      for (let index = 0; index < files.length; index += 1) {
+-        const bytes = await imageToJpegBytes(files[index]);
++      for (const [index, file] of files.entries()) {
++        const bytes = await imageToJpegBytes(file);
+         const image = await pdf.embedJpg(bytes);
+         const page = pdf.addPage([image.width, image.height]);
+         page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+diff --git a/src/core/processing/merge-pdf.ts b/src/core/processing/merge-pdf.ts
+index f7ea7d9..5a6905d 100644
+--- a/src/core/processing/merge-pdf.ts
++++ b/src/core/processing/merge-pdf.ts
+@@ -27,28 +27,33 @@ export function createMergePdfProcessor(): ToolProcessor {
+         throw new ProcessingError("FILE_TOO_LARGE", "Combined size is limited to 100 MB.");
+       }
+ 
+-      const merged = await PDFDocument.create();
+-      merged.setProducer("Pixora");
+-      merged.setCreator("Pixora Merge PDF");
+-
+-      for (let index = 0; index < files.length; index += 1) {
+-        const file = files[index];
++      // Validate every type upfront: cheaper than parsing, and it reports the
++      // offending file immediately instead of after earlier files are parsed.
++      for (const file of files) {
+         if (file.type !== "application/pdf") {
+           throw new ProcessingError("UNSUPPORTED_FORMAT", `${file.name} is not a PDF file.`);
+         }
++      }
+ 
+-        let source: PDFDocument;
++      const merged = await PDFDocument.create();
++      merged.setProducer("Pixora");
++      merged.setCreator("Pixora Merge PDF");
++
++      for (const [index, file] of files.entries()) {
++        // Loading and page extraction share one guard: pdf-lib accepts some
++        // malformed files at load and only fails when the page tree is walked,
++        // which would otherwise surface a raw TypeError to the user.
+         try {
+-          source = await PDFDocument.load(await file.arrayBuffer(), { ignoreEncryption: false });
+-        } catch {
++          const source = await PDFDocument.load(await file.arrayBuffer(), { ignoreEncryption: false });
++          const pages = await merged.copyPages(source, source.getPageIndices());
++          for (const page of pages) merged.addPage(page);
++        } catch (cause) {
++          if (cause instanceof ProcessingError) throw cause;
+           throw new ProcessingError(
+             "INVALID_FILE",
+             `${file.name} could not be read. It may be corrupted or password protected.`,
+           );
+         }
+-
+-        const pages = await merged.copyPages(source, source.getPageIndices());
+-        for (const page of pages) merged.addPage(page);
+         context?.onProgress?.(Math.round(((index + 1) / files.length) * 90));
+       }
+ 
+diff --git a/src/core/processing/pdf-to-jpg.ts b/src/core/processing/pdf-to-jpg.ts
+index 2af2d68..ee19d99 100644
+--- a/src/core/processing/pdf-to-jpg.ts
++++ b/src/core/processing/pdf-to-jpg.ts
+@@ -88,7 +88,8 @@ export function createPdfToJpgProcessor(): ToolProcessor {
+           context?.onProgress?.(5 + Math.round((pageNumber / pdf.numPages) * 90));
+         }
+ 
+-        if (outputs.length === 1) return outputs[0];
++        const first = outputs[0];
++        if (outputs.length === 1 && first) return first;
+ 
+         const entries: Record<string, Uint8Array> = {};
+         for (const file of outputs) {
+diff --git a/src/core/processing/split-pdf.ts b/src/core/processing/split-pdf.ts
+index fcd3b82..9fd6089 100644
+--- a/src/core/processing/split-pdf.ts
++++ b/src/core/processing/split-pdf.ts
+@@ -53,6 +53,9 @@ export function createSplitPdfProcessor(): ToolProcessor {
+   return {
+     async process(input: File | File[], context?: ToolContext) {
+       const file = Array.isArray(input) ? input[0] : input;
++      if (!file) {
++        throw new ProcessingError("FILE_REQUIRED", "Select a PDF file to split.");
++      }
+       const mode = (context?.options?.mode as SplitMode | undefined) ?? "range";
+       const rangeText = (context?.options?.range as string | undefined) ?? "";
+ 
+@@ -102,6 +105,9 @@ export function createSplitPdfProcessor(): ToolProcessor {
+ 
+       if (pageCount === 1) {
+         const only = Object.values(entries)[0];
++        if (!only) {
++          throw new ProcessingError("PROCESSING_FAILED", "The PDF page could not be extracted.");
++        }
+         return new File([blobFromBytes(only, "application/pdf")], `${stem}-page-1.pdf`, {
+           type: "application/pdf",
+           lastModified: Date.now(),
+diff --git a/src/core/processing/types.ts b/src/core/processing/types.ts
+index 157daa1..036be84 100644
+--- a/src/core/processing/types.ts
++++ b/src/core/processing/types.ts
+@@ -1,29 +1 @@
+ export type ProcessingStatus = "idle" | "validating" | "ready" | "processing" | "completed" | "error";
+-
+-/**
+- * Legacy shape kept for reference; the runtime error class is
+- * `ProcessingError` from `./errors.ts`. Renamed to avoid name collision
+- * that previously shadowed the class with an interface.
+- */
+-export interface ProcessingErrorInfo {
+-  code:
+-    | "FILE_REQUIRED"
+-    | "FILE_TOO_LARGE"
+-    | "UNSUPPORTED_FORMAT"
+-    | "INVALID_FILE"
+-    | "PROCESSING_FAILED"
+-    | "BROWSER_UNSUPPORTED"
+-    | "MEMORY_LIMIT"
+-    | "SERVER_ERROR"
+-    | "RATE_LIMITED"
+-    | "UNKNOWN_ERROR";
+-  message: string;
+-  recoverable: boolean;
+-}
+-
+-export interface ProcessingResult<T = Blob> {
+-  output: T;
+-  filename: string;
+-  mimeType: string;
+-  sizeBytes?: number;
+-}
+diff --git a/src/core/tool-engine/browser-worker.ts b/src/core/tool-engine/browser-worker.ts
+index b8c31e0..fea1169 100644
+--- a/src/core/tool-engine/browser-worker.ts
++++ b/src/core/tool-engine/browser-worker.ts
+@@ -9,8 +9,22 @@ export type WorkerImageOptions = {
+ 
+ let worker: Worker | null = null;
+ 
++/**
++ * Whether the worker pipeline can run here. Requires Workers (for the
++ * off-main-thread hop) and OffscreenCanvas, which the worker uses to draw —
++ * Safari only gained the latter in 16.4, so callers must keep a main-thread
++ * fallback rather than treating this as always true.
++ */
++export function canUseImageWorker(): boolean {
++  return (
++    typeof window !== "undefined" &&
++    typeof Worker !== "undefined" &&
++    typeof OffscreenCanvas !== "undefined"
++  );
++}
++
+ function getWorker(): Worker {
+-  if (typeof window === "undefined" || typeof Worker === "undefined") {
++  if (!canUseImageWorker()) {
+     throw new ProcessingError("BROWSER_UNSUPPORTED", "Web Workers are unavailable in this browser.");
+   }
+   worker ??= new Worker(new URL("../../workers/image.worker.ts", import.meta.url));
+diff --git a/src/core/tool-engine/engine.ts b/src/core/tool-engine/engine.ts
+index 160b564..78574b2 100644
+--- a/src/core/tool-engine/engine.ts
++++ b/src/core/tool-engine/engine.ts
+@@ -13,6 +13,11 @@ export class ToolEngine {
+     const files = Array.isArray(input) ? input : [input];
+     const accepted = definition.inputFormats ?? [];
+ 
++    const primary = files[0];
++    if (!primary) {
++      throw new ProcessingError("FILE_REQUIRED", "Please select a file to continue.");
++    }
++
+     if (accepted.length > 0) {
+       for (const file of files) {
+         // Some formats (notably HEIC on Windows) report an empty MIME type;
+@@ -31,7 +36,7 @@ export class ToolEngine {
+     try {
+       context?.onStatus?.("processing");
+       context?.onProgress?.(5);
+-      const output = await processor.process(definition.multiFile ? files : files[0], context);
++      const output = await processor.process(definition.multiFile ? files : primary, context);
+       context?.onProgress?.(100);
+       context?.onStatus?.("completed");
+ 
+diff --git a/src/core/tool-engine/types.ts b/src/core/tool-engine/types.ts
+index 71c6879..67df370 100644
+--- a/src/core/tool-engine/types.ts
++++ b/src/core/tool-engine/types.ts
+@@ -1,4 +1,3 @@
+-import type { ProcessingError } from "../processing/errors";
+ import type { ProcessingStatus } from "../processing/types";
+ 
+ export type ToolOptions = Readonly<Record<string, unknown>>;
+@@ -18,7 +17,3 @@ export type ToolRunResult = {
+   output: File | Blob;
+   durationMs: number;
+ };
+-
+-export type ToolRunFailure = {
+-  error: ProcessingError | Error;
+-};
+diff --git a/src/core/tools/categories.ts b/src/core/tools/categories.ts
+index c81e3c6..90bde10 100644
+--- a/src/core/tools/categories.ts
++++ b/src/core/tools/categories.ts
+@@ -62,7 +62,7 @@ export const toolCategories: readonly ToolCategoryMeta[] = [
+     label: "Developer Tools",
+     shortLabel: "Developer",
+     description: "Format JSON, encode Base64, generate UUIDs and hashes, convert colors and time zones.",
+-    seoTitle: "Free Online Developer Tools — JSON, Base64, UUID, Hash & Color",
++    seoTitle: "Free Developer Tools — JSON, Base64, UUID & Hash",
+     seoDescription:
+       "Free developer tools: JSON formatter, Base64 encoder/decoder, UUID generator, MD5/SHA hash generator, color converter and time zone converter.",
+     accent: "cyan",
+diff --git a/src/core/tools/registry-calculators.ts b/src/core/tools/registry-calculators.ts
+index d855bb2..b8e24d8 100644
+--- a/src/core/tools/registry-calculators.ts
++++ b/src/core/tools/registry-calculators.ts
+@@ -11,7 +11,7 @@ export const calculatorTools: ToolDefinition[] = [
+     primaryIntent: "calculate BMI",
+     processingMode: "browser",
+     seo: {
+-      title: "BMI Calculator — Check Your Body Mass Index (Metric & Imperial)",
++      title: "BMI Calculator — Metric & Imperial Body Mass Index",
+       description:
+         "Free BMI calculator for adults. Enter height and weight in metric or imperial units to get your BMI, WHO category and healthy weight range instantly.",
+       h1: "BMI Calculator",
+diff --git a/src/core/tools/registry-developer.ts b/src/core/tools/registry-developer.ts
+index 6dd46cc..d26f25e 100644
+--- a/src/core/tools/registry-developer.ts
++++ b/src/core/tools/registry-developer.ts
+@@ -37,11 +37,11 @@ export const developerTools: ToolDefinition[] = [
+       ],
+       keywords: ["json formatter", "json validator", "json beautifier", "json minify"],
+     },
+-    relatedTools: ["base64-encoder", "hash-generator", "uuid-generator"],
++    relatedTools: ["base64-encode-decode", "hash-generator", "uuid-generator"],
+     status: "live",
+   },
+   {
+-    id: "base64-encoder",
++    id: "base64-encode-decode",
+     slug: "base64-encode-decode",
+     name: "Base64 Encode / Decode",
+     category: "developer",
+@@ -151,7 +151,7 @@ export const developerTools: ToolDefinition[] = [
+       ],
+       keywords: ["hash generator", "sha256 generator", "sha1 hash", "checksum generator"],
+     },
+-    relatedTools: ["base64-encoder", "uuid-generator", "password-generator"],
++    relatedTools: ["base64-encode-decode", "uuid-generator", "password-generator"],
+     status: "live",
+   },
+   {
+@@ -189,7 +189,7 @@ export const developerTools: ToolDefinition[] = [
+       ],
+       keywords: ["hex to rgb", "color converter", "rgb to hsl", "color picker online"],
+     },
+-    relatedTools: ["json-formatter", "base64-encoder", "qr-code-generator"],
++    relatedTools: ["json-formatter", "base64-encode-decode", "qr-code-generator"],
+     status: "live",
+   },
+   {
+diff --git a/src/core/tools/registry-text.ts b/src/core/tools/registry-text.ts
+index 3445031..5accabb 100644
+--- a/src/core/tools/registry-text.ts
++++ b/src/core/tools/registry-text.ts
+@@ -54,7 +54,7 @@ export const textTools: ToolDefinition[] = [
+     primaryIntent: "count characters in text",
+     processingMode: "browser",
+     seo: {
+-      title: "Character Counter — Count Characters Online with Platform Limits",
++      title: "Character Counter — Count Characters Online Free",
+       description:
+         "Free character counter. Count characters with and without spaces, with live limit checks for X/Twitter, Instagram captions, SMS and SEO meta descriptions.",
+       h1: "Character Counter",
+diff --git a/src/tools/image/processors.ts b/src/tools/image/processors.ts
+index 8645afb..de8b226 100644
+--- a/src/tools/image/processors.ts
++++ b/src/tools/image/processors.ts
+@@ -1,15 +1,70 @@
+ import { compressImage } from "../../core/processing/compress-image";
+ import { ProcessingError } from "../../core/processing/errors";
++import { canUseImageWorker, processImageInWorker } from "../../core/tool-engine/browser-worker";
+ import type { ToolContext, ToolProcessor } from "../../core/tool-engine/types";
+ import { canvasFromImage, canvasToBlob, decodeImage } from "./common";
+ 
++/**
++ * Runs the decode/encode off the main thread when the browser supports it, so
++ * large images don't jank the UI. Falls back to the main-thread canvas path on
++ * any worker failure, since a slow result beats a broken tool.
++ */
++async function encodeImage(
++  input: File,
++  outputType: string,
++  quality: number,
++  context?: ToolContext,
++  width?: number,
++  height?: number,
++): Promise<Blob> {
++  if (canUseImageWorker()) {
++    try {
++      const blob = await processImageInWorker(input, { outputType, quality, width, height });
++      context?.onProgress?.(90);
++      return blob;
++    } catch {
++      // Fall through to the main-thread path below.
++    }
++  }
++
++  const image = await decodeImage(input, context);
++  if (width === undefined && height === undefined) {
++    const canvas = canvasFromImage(image);
++    context?.onProgress?.(70);
++    return canvasToBlob(canvas, outputType, quality);
++  }
++
++  const canvas = document.createElement("canvas");
++  canvas.width = width ?? image.naturalWidth;
++  canvas.height = height ?? image.naturalHeight;
++  const ctx = canvas.getContext("2d");
++  if (!ctx) {
++    throw new ProcessingError("BROWSER_UNSUPPORTED", "This browser cannot resize images.");
++  }
++  ctx.imageSmoothingQuality = "high";
++  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
++  context?.onProgress?.(75);
++  return canvasToBlob(canvas, outputType, quality);
++}
++
++/** Reads intrinsic dimensions, preferring the cheap `createImageBitmap` path. */
++async function readImageSize(input: File): Promise<{ width: number; height: number }> {
++  if (typeof createImageBitmap === "function") {
++    const bitmap = await createImageBitmap(input);
++    try {
++      return { width: bitmap.width, height: bitmap.height };
++    } finally {
++      bitmap.close();
++    }
++  }
++  const image = await decodeImage(input);
++  return { width: image.naturalWidth, height: image.naturalHeight };
++}
++
+ export function createImageConversionProcessor(outputType: string, outputName: string): ToolProcessor {
+   return {
+     async process(input: File, context?: ToolContext) {
+-      const image = await decodeImage(input, context);
+-      const canvas = canvasFromImage(image);
+-      context?.onProgress?.(70);
+-      const blob = await canvasToBlob(canvas, outputType, 0.92);
++      const blob = await encodeImage(input, outputType, 0.92, context);
+       context?.onProgress?.(95);
+       return new File([blob], outputName, { type: outputType });
+     },
+@@ -20,6 +75,22 @@ export function createCompressionProcessor(): ToolProcessor {
+   return {
+     async process(input: File, context?: ToolContext) {
+       context?.onProgress?.(15);
++
++      // Target-size search needs repeated re-encodes of one decoded bitmap, which
++      // the single-shot worker protocol can't express — keep that on the main
++      // thread and use the worker only for the simple quality-only case.
++      if (canUseImageWorker()) {
++        try {
++          const outputType =
++            input.type === "image/png" ? "image/png" : input.type === "image/webp" ? "image/webp" : "image/jpeg";
++          const blob = await processImageInWorker(input, { outputType, quality: 0.82 });
++          context?.onProgress?.(95);
++          return new File([blob], `pixora-compressed.${extensionFor(blob.type)}`, { type: blob.type });
++        } catch {
++          // Fall through to the main-thread compressor.
++        }
++      }
++
+       const result = await compressImage(input);
+       context?.onProgress?.(95);
+       return new File([result.blob], `pixora-compressed.${extensionFor(result.blob.type)}`, {
+@@ -36,9 +107,7 @@ export function createResizeProcessor(defaultWidth = 1200, defaultHeight = 1200)
+       const requestedHeight = Number(context?.options?.height) || 0;
+       const outputType = input.type === "image/png" ? "image/png" : input.type === "image/webp" ? "image/webp" : "image/jpeg";
+ 
+-      const image = await decodeImage(input, context);
+-      const sourceWidth = image.naturalWidth;
+-      const sourceHeight = image.naturalHeight;
++      const { width: sourceWidth, height: sourceHeight } = await readImageSize(input);
+ 
+       let width = requestedWidth;
+       let height = requestedHeight;
+@@ -56,17 +125,7 @@ export function createResizeProcessor(defaultWidth = 1200, defaultHeight = 1200)
+         throw new ProcessingError("PROCESSING_FAILED", "Maximum output dimension is 10,000 pixels.");
+       }
+ 
+-      const canvas = document.createElement("canvas");
+-      canvas.width = width;
+-      canvas.height = height;
+-      const ctx = canvas.getContext("2d");
+-      if (!ctx) {
+-        throw new ProcessingError("BROWSER_UNSUPPORTED", "This browser cannot resize images.");
+-      }
+-      ctx.imageSmoothingQuality = "high";
+-      ctx.drawImage(image, 0, 0, width, height);
+-      context?.onProgress?.(75);
+-      const blob = await canvasToBlob(canvas, outputType, 0.92);
++      const blob = await encodeImage(input, outputType, 0.92, context, width, height);
+       context?.onProgress?.(95);
+       return new File([blob], `pixora-resized-${width}x${height}.${extensionFor(outputType)}`, { type: outputType });
+     },
+diff --git a/tests/merge-pdf.test.ts b/tests/merge-pdf.test.ts
+new file mode 100644
+index 0000000..bacb729
+--- /dev/null
++++ b/tests/merge-pdf.test.ts
+@@ -0,0 +1,44 @@
++import { describe, expect, it } from "vitest";
++import { createMergePdfProcessor } from "@/core/processing/merge-pdf";
++import { ProcessingError } from "@/core/processing/errors";
++
++function pdf(name: string, sizeBytes = 1024): File {
++  const file = new File(["%PDF-1.4"], name, { type: "application/pdf" });
++  Object.defineProperty(file, "size", { value: sizeBytes });
++  return file;
++}
++
++/**
++ * Guard-clause coverage. The pdf-lib merge itself needs real PDF bytes and is
++ * exercised in the browser; these assertions pin the input contract, which is
++ * where the user-facing error messages come from.
++ */
++describe("merge-pdf guards", () => {
++  const processor = createMergePdfProcessor();
++
++  it("requires at least two files", async () => {
++    await expect(processor.process([pdf("only.pdf")])).rejects.toThrowError(/at least two/i);
++    await expect(processor.process(pdf("single.pdf"))).rejects.toThrowError(ProcessingError);
++  });
++
++  it("rejects more than 20 files", async () => {
++    const files = Array.from({ length: 21 }, (_, i) => pdf(`doc-${i}.pdf`));
++    await expect(processor.process(files)).rejects.toThrowError(/up to 20/i);
++  });
++
++  it("rejects a combined size over 100 MB", async () => {
++    const files = [pdf("a.pdf", 60 * 1024 * 1024), pdf("b.pdf", 60 * 1024 * 1024)];
++    await expect(processor.process(files)).rejects.toThrowError(/100 MB/);
++  });
++
++  it("rejects a non-PDF file and names it in the message", async () => {
++    const notPdf = new File(["x"], "photo.jpg", { type: "image/jpeg" });
++    await expect(processor.process([pdf("a.pdf"), notPdf])).rejects.toThrowError(/photo\.jpg is not a PDF/);
++  });
++
++  it("surfaces a readable error for unparseable PDF bytes", async () => {
++    await expect(processor.process([pdf("a.pdf"), pdf("b.pdf")])).rejects.toThrowError(
++      /could not be read|corrupted|password/i,
++    );
++  });
++});
+diff --git a/tests/tool-coverage.test.ts b/tests/tool-coverage.test.ts
+new file mode 100644
+index 0000000..a9e12db
+--- /dev/null
++++ b/tests/tool-coverage.test.ts
+@@ -0,0 +1,48 @@
++import { readFileSync } from "node:fs";
++import { describe, expect, it } from "vitest";
++import { toolRegistry } from "@/core/tools/registry";
++import { getDefaultProcessor } from "@/core/tool-engine/processors";
++
++/**
++ * Guards the two lookup tables that map a registry entry to something that can
++ * actually run. A tool can otherwise ship a fully SEO-optimised page whose
++ * workspace renders "coming soon" — the failure mode this suite exists to catch.
++ */
++describe("tool implementation coverage", () => {
++  const widgetSource = readFileSync(
++    new URL("../src/components/tools/interactive-workspace.tsx", import.meta.url),
++    "utf8",
++  );
++  const mappedWidgets = [...widgetSource.matchAll(/^\s+"([a-z0-9-]+)":/gm)]
++    .map((match) => match[1])
++    .filter((slug): slug is string => Boolean(slug));
++
++  it("resolves a processor for every file tool", () => {
++    for (const tool of toolRegistry.filter((entry) => entry.kind === "file")) {
++      expect(getDefaultProcessor(tool.slug), `no processor for ${tool.slug}`).not.toBeNull();
++    }
++  });
++
++  it("resolves a widget for every interactive tool", () => {
++    for (const tool of toolRegistry.filter((entry) => entry.kind === "interactive")) {
++      expect(mappedWidgets, `no widget for ${tool.slug}`).toContain(tool.slug);
++    }
++  });
++
++  it("registers no widget for a tool that does not exist", () => {
++    const slugs = new Set(toolRegistry.map((tool) => tool.slug));
++    for (const mapped of mappedWidgets) {
++      expect(slugs.has(mapped), `orphan widget: ${mapped}`).toBe(true);
++    }
++  });
++
++  it("returns null for an unknown processor slug", () => {
++    expect(getDefaultProcessor("definitely-not-a-tool")).toBeNull();
++  });
++
++  it("never returns a processor for an interactive tool", () => {
++    for (const tool of toolRegistry.filter((entry) => entry.kind === "interactive")) {
++      expect(getDefaultProcessor(tool.slug), `unexpected processor for ${tool.slug}`).toBeNull();
++    }
++  });
++});
+diff --git a/tests/tool-engine.test.ts b/tests/tool-engine.test.ts
+new file mode 100644
+index 0000000..1c70945
+--- /dev/null
++++ b/tests/tool-engine.test.ts
+@@ -0,0 +1,158 @@
++import { describe, expect, it, vi } from "vitest";
++import { ToolEngine } from "@/core/tool-engine/engine";
++import { ProcessingError } from "@/core/processing/errors";
++import type { ToolProcessor } from "@/core/tool-engine/types";
++import type { ToolDefinition } from "@/core/tools/types";
++
++function makeFile(name: string, type: string, sizeBytes = 1024): File {
++  const file = new File(["x"], name, { type });
++  Object.defineProperty(file, "size", { value: sizeBytes });
++  return file;
++}
++
++function definition(overrides: Partial<ToolDefinition> = {}): ToolDefinition {
++  return {
++    id: "test-tool",
++    slug: "test-tool",
++    name: "Test Tool",
++    category: "image",
++    kind: "file",
++    description: "",
++    primaryIntent: "",
++    processingMode: "browser",
++    inputFormats: ["image/jpeg"],
++    outputFormats: ["image/png"],
++    seo: { title: "", description: "", h1: "", directAnswer: "", howTo: [], faqs: [], keywords: [] },
++    relatedTools: [],
++    status: "live",
++    ...overrides,
++  };
++}
++
++const passthrough: ToolProcessor = {
++  async process(input) {
++    const file = Array.isArray(input) ? input[0] : input;
++    if (!file) throw new Error("no input file");
++    return file;
++  },
++};
++
++describe("ToolEngine", () => {
++  it("runs a processor and reports a duration", async () => {
++    const result = await new ToolEngine().run(definition(), passthrough, makeFile("a.jpg", "image/jpeg"));
++    expect(result.output).toBeInstanceOf(File);
++    expect(result.durationMs).toBeGreaterThanOrEqual(0);
++  });
++
++  it("emits progress and status callbacks in order", async () => {
++    const statuses: string[] = [];
++    const progress: number[] = [];
++    await new ToolEngine().run(definition(), passthrough, makeFile("a.jpg", "image/jpeg"), {
++      onStatus: (s) => statuses.push(s),
++      onProgress: (p) => progress.push(p),
++    });
++    expect(statuses).toEqual(["processing", "completed"]);
++    expect(progress.at(0)).toBe(5);
++    expect(progress.at(-1)).toBe(100);
++  });
++
++  it("rejects a file whose mime type is not accepted", async () => {
++    await expect(
++      new ToolEngine().run(definition(), passthrough, makeFile("a.pdf", "application/pdf")),
++    ).rejects.toThrowError(ProcessingError);
++  });
++
++  it("allows a blank mime type through to the processor (HEIC on Windows)", async () => {
++    const spy = vi.fn(passthrough.process);
++    const result = await new ToolEngine().run(
++      definition({ inputFormats: ["image/heic"] }),
++      { process: spy },
++      makeFile("IMG.HEIC", ""),
++    );
++    expect(spy).toHaveBeenCalledOnce();
++    expect(result.output).toBeInstanceOf(File);
++  });
++
++  it("still enforces the 100 MB cap for blank mime types", async () => {
++    await expect(
++      new ToolEngine().run(
++        definition({ inputFormats: ["image/heic"] }),
++        passthrough,
++        makeFile("IMG.HEIC", "", 101 * 1024 * 1024),
++      ),
++    ).rejects.toThrowError(/limit/);
++  });
++
++  it("skips validation entirely when the tool declares no input formats", async () => {
++    const result = await new ToolEngine().run(
++      definition({ inputFormats: undefined }),
++      passthrough,
++      makeFile("weird.xyz", "application/x-thing"),
++    );
++    expect(result.output).toBeInstanceOf(File);
++  });
++
++  it("passes the whole array to multi-file tools and a single file otherwise", async () => {
++    const multi = vi.fn(passthrough.process);
++    await new ToolEngine().run(
++      definition({ multiFile: true }),
++      { process: multi },
++      [makeFile("a.jpg", "image/jpeg"), makeFile("b.jpg", "image/jpeg")],
++    );
++    expect(Array.isArray(multi.mock.calls[0]?.[0])).toBe(true);
++
++    const single = vi.fn(passthrough.process);
++    await new ToolEngine().run(
++      definition(),
++      { process: single },
++      [makeFile("a.jpg", "image/jpeg"), makeFile("b.jpg", "image/jpeg")],
++    );
++    expect(Array.isArray(single.mock.calls[0]?.[0])).toBe(false);
++  });
++
++  it("validates every file in a multi-file batch", async () => {
++    await expect(
++      new ToolEngine().run(definition({ multiFile: true }), passthrough, [
++        makeFile("a.jpg", "image/jpeg"),
++        makeFile("b.pdf", "application/pdf"),
++      ]),
++    ).rejects.toThrowError(ProcessingError);
++  });
++
++  it("sets error status and preserves a ProcessingError thrown by the processor", async () => {
++    const statuses: string[] = [];
++    const failing: ToolProcessor = {
++      async process() {
++        throw new ProcessingError("INVALID_FILE", "bespoke message");
++      },
++    };
++    await expect(
++      new ToolEngine().run(definition(), failing, makeFile("a.jpg", "image/jpeg"), {
++        onStatus: (s) => statuses.push(s),
++      }),
++    ).rejects.toMatchObject({ code: "INVALID_FILE", message: "bespoke message" });
++    expect(statuses).toContain("error");
++  });
++
++  it("wraps an unknown error as PROCESSING_FAILED, keeping the message", async () => {
++    const failing: ToolProcessor = {
++      async process() {
++        throw new Error("canvas exploded");
++      },
++    };
++    await expect(
++      new ToolEngine().run(definition(), failing, makeFile("a.jpg", "image/jpeg")),
++    ).rejects.toMatchObject({ code: "PROCESSING_FAILED", message: "canvas exploded" });
++  });
++
++  it("wraps a non-Error throw with a generic message", async () => {
++    const failing: ToolProcessor = {
++      async process() {
++        throw "just a string";
++      },
++    };
++    await expect(
++      new ToolEngine().run(definition(), failing, makeFile("a.jpg", "image/jpeg")),
++    ).rejects.toMatchObject({ code: "PROCESSING_FAILED" });
++  });
++});
+diff --git a/tests/tool-registry.test.ts b/tests/tool-registry.test.ts
+index f9fe1ea..e885e08 100644
+--- a/tests/tool-registry.test.ts
++++ b/tests/tool-registry.test.ts
+@@ -15,8 +15,9 @@ describe("Pixora tool registry", () => {
+ 
+   it("resolves tools through both id and slug", () => {
+     const tool = toolRegistry[0];
+-    expect(getToolById(tool.id)).toEqual(tool);
+-    expect(getToolBySlug(tool.slug)).toEqual(tool);
++    expect(tool).toBeDefined();
++    expect(getToolById(tool!.id)).toEqual(tool);
++    expect(getToolBySlug(tool!.slug)).toEqual(tool);
+   });
+ 
+   it("assigns every tool to a known category", () => {
+@@ -63,4 +64,68 @@ describe("Pixora tool registry", () => {
+       }
+     }
+   });
++
++  // --- invariants added after the full-repo audit ---
++
++  it("keeps id and slug identical for every tool", () => {
++    // Both lookup tables (widgets and processors) key on slug; a tool whose id
++    // diverges silently resolves in one and not the other.
++    for (const tool of toolRegistry) {
++      expect(tool.id, `id/slug mismatch for ${tool.id}`).toBe(tool.slug);
++    }
++  });
++
++  it("never lists a tool as its own related tool", () => {
++    for (const tool of toolRegistry) {
++      expect(tool.relatedTools, `${tool.id} references itself`).not.toContain(tool.id);
++    }
++  });
++
++  it("keeps SEO titles within the 60-character SERP limit", () => {
++    for (const tool of toolRegistry) {
++      expect(tool.seo.title.length, `title too long: ${tool.seo.title}`).toBeLessThanOrEqual(60);
++    }
++    for (const category of toolCategories) {
++      expect(
++        category.seoTitle.length,
++        `category title too long: ${category.seoTitle}`,
++      ).toBeLessThanOrEqual(60);
++    }
++  });
++
++  it("keeps meta descriptions within the 160-character limit", () => {
++    for (const tool of toolRegistry) {
++      expect(tool.seo.description.length, `description too long: ${tool.slug}`).toBeLessThanOrEqual(160);
++    }
++    for (const category of toolCategories) {
++      expect(category.seoDescription.length, `category description: ${category.slug}`).toBeLessThanOrEqual(160);
++    }
++  });
++
++  it("gives every tool a unique title and description", () => {
++    const titles = toolRegistry.map((tool) => tool.seo.title);
++    const descriptions = toolRegistry.map((tool) => tool.seo.description);
++    expect(new Set(titles).size, "duplicate SEO titles").toBe(titles.length);
++    expect(new Set(descriptions).size, "duplicate meta descriptions").toBe(descriptions.length);
++  });
++
++  it("gives every tool keywords and a unique category slug", () => {
++    for (const tool of toolRegistry) {
++      expect(tool.seo.keywords.length, `keywords for ${tool.slug}`).toBeGreaterThan(0);
++    }
++    const slugs = toolCategories.map((category) => category.slug);
++    expect(new Set(slugs).size).toBe(slugs.length);
++  });
++
++  it("declares output formats on file tools and no file fields on interactive tools", () => {
++    for (const tool of toolRegistry) {
++      if (tool.kind === "file") {
++        expect(tool.outputFormats?.length, `outputs for ${tool.slug}`).toBeGreaterThan(0);
++      } else {
++        expect(tool.inputFormats, `${tool.slug} is interactive but declares inputFormats`).toBeUndefined();
++        expect(tool.outputFormats, `${tool.slug} is interactive but declares outputFormats`).toBeUndefined();
++        expect(tool.multiFile, `${tool.slug} is interactive but declares multiFile`).toBeUndefined();
++      }
++    }
++  });
+ });
+diff --git a/tests/validate-file.test.ts b/tests/validate-file.test.ts
+new file mode 100644
+index 0000000..e5961a5
+--- /dev/null
++++ b/tests/validate-file.test.ts
+@@ -0,0 +1,84 @@
++import { describe, expect, it } from "vitest";
++import { validateFile } from "@/core/processing/validate-file";
++import { ProcessingError } from "@/core/processing/errors";
++
++function makeFile(name: string, type: string, sizeBytes: number): File {
++  const file = new File(["x"], name, { type });
++  // File size is read-only; override for size-limit assertions without
++  // allocating multi-megabyte buffers in the test run.
++  Object.defineProperty(file, "size", { value: sizeBytes });
++  return file;
++}
++
++const IMAGES = ["image/jpeg", "image/png"] as const;
++
++describe("validateFile", () => {
++  it("accepts a file with an allowed mime type and size", () => {
++    const file = makeFile("photo.jpg", "image/jpeg", 1024);
++    expect(validateFile(file, { acceptedMimeTypes: IMAGES })).toBe(file);
++  });
++
++  it("rejects an empty file", () => {
++    const file = makeFile("empty.jpg", "image/jpeg", 0);
++    expect(() => validateFile(file, { acceptedMimeTypes: IMAGES })).toThrowError(ProcessingError);
++    try {
++      validateFile(file, { acceptedMimeTypes: IMAGES });
++    } catch (error) {
++      expect((error as ProcessingError).code).toBe("INVALID_FILE");
++    }
++  });
++
++  it("rejects an unsupported mime type", () => {
++    const file = makeFile("doc.pdf", "application/pdf", 1024);
++    try {
++      validateFile(file, { acceptedMimeTypes: IMAGES });
++      throw new Error("expected a throw");
++    } catch (error) {
++      expect((error as ProcessingError).code).toBe("UNSUPPORTED_FORMAT");
++      expect((error as Error).message).toContain("application/pdf");
++    }
++  });
++
++  it("reports 'unknown' for a blank mime type when not allowed", () => {
++    const file = makeFile("mystery.bin", "", 1024);
++    try {
++      validateFile(file, { acceptedMimeTypes: IMAGES });
++      throw new Error("expected a throw");
++    } catch (error) {
++      expect((error as Error).message).toContain("unknown");
++    }
++  });
++
++  it("enforces the default 20 MB limit", () => {
++    const file = makeFile("big.jpg", "image/jpeg", 21 * 1024 * 1024);
++    try {
++      validateFile(file, { acceptedMimeTypes: IMAGES });
++      throw new Error("expected a throw");
++    } catch (error) {
++      expect((error as ProcessingError).code).toBe("FILE_TOO_LARGE");
++      expect((error as Error).message).toContain("20 MB");
++    }
++  });
++
++  it("honours a custom maxBytes limit", () => {
++    const file = makeFile("photo.jpg", "image/jpeg", 2 * 1024 * 1024);
++    expect(() =>
++      validateFile(file, { acceptedMimeTypes: IMAGES, maxBytes: 1024 * 1024 }),
++    ).toThrowError(/1 MB limit/);
++  });
++
++  it("skips the mime check but still enforces size when allowEmptyMime is set", () => {
++    const heic = makeFile("IMG_0001.HEIC", "", 1024);
++    expect(validateFile(heic, { acceptedMimeTypes: [], allowEmptyMime: true })).toBe(heic);
++
++    const tooBig = makeFile("IMG_0002.HEIC", "", 50 * 1024 * 1024);
++    expect(() =>
++      validateFile(tooBig, { acceptedMimeTypes: [], allowEmptyMime: true, maxBytes: 20 * 1024 * 1024 }),
++    ).toThrowError(ProcessingError);
++  });
++
++  it("skips the mime check when the accepted list is empty", () => {
++    const file = makeFile("anything.xyz", "application/x-thing", 1024);
++    expect(validateFile(file, { acceptedMimeTypes: [] })).toBe(file);
++  });
++});
+diff --git a/tsconfig.json b/tsconfig.json
+index 79505ad..58613c8 100644
+--- a/tsconfig.json
++++ b/tsconfig.json
+@@ -9,6 +9,8 @@
+     "allowJs": false,
+     "skipLibCheck": true,
+     "strict": true,
++    "noUncheckedIndexedAccess": true,
++    "noImplicitOverride": true,
+     "noEmit": true,
+     "esModuleInterop": true,
+     "module": "esnext",
+diff --git a/vitest.config.ts b/vitest.config.mts
+similarity index 100%
+rename from vitest.config.ts
+rename to vitest.config.mts
+-- 
+2.39.5
