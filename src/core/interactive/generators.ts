@@ -38,18 +38,20 @@ export function generatePassword(options: PasswordOptions, randomValues?: (lengt
   const values = getRandom(length);
   const chars: string[] = [];
   for (let i = 0; i < length; i += 1) {
-    if (i < pools.length) {
-      chars.push(pools[i][values[i] % pools[i].length]);
-    } else {
-      chars.push(alphabet[values[i] % alphabet.length]);
-    }
+    const value = values[i] ?? 0;
+    const pool = i < pools.length ? pools[i] : alphabet;
+    const source = pool ?? alphabet;
+    chars.push(source.charAt(value % source.length));
   }
 
   // Shuffle (Fisher-Yates) so guaranteed characters aren't predictable.
   const shuffleValues = getRandom(length);
   for (let i = length - 1; i > 0; i -= 1) {
-    const j = shuffleValues[i] % (i + 1);
-    [chars[i], chars[j]] = [chars[j], chars[i]];
+    const j = (shuffleValues[i] ?? 0) % (i + 1);
+    const a = chars[i] as string;
+    const b = chars[j] as string;
+    chars[i] = b;
+    chars[j] = a;
   }
 
   return chars.join("");
@@ -86,7 +88,10 @@ export function generateRandomNumbers(
     const pool = Array.from({ length: rangeSize }, (_, index) => min + index);
     for (let i = pool.length - 1; i > 0; i -= 1) {
       const j = Math.floor(randomValue() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
+      const a = pool[i] as number;
+      const b = pool[j] as number;
+      pool[i] = b;
+      pool[j] = a;
     }
     return pool.slice(0, clampedCount);
   }
@@ -97,7 +102,7 @@ export function generateRandomNumbers(
 function secureRandom(): number {
   const array = new Uint32Array(1);
   crypto.getRandomValues(array);
-  return array[0] / 2 ** 32;
+  return (array[0] ?? 0) / 2 ** 32;
 }
 
 // ---------- UUID ----------
@@ -255,8 +260,8 @@ export function convertZonedTime(
   fromZone: string,
   toZone: string,
 ): { date: string; time: string; dayLabel: string } {
-  const [year, month, day] = dateISO.split("-").map(Number);
-  const [hours, minutes] = timeHHMM.split(":").map(Number);
+  const [year = 0, month = 1, day = 1] = dateISO.split("-").map(Number);
+  const [hours = 0, minutes = 0] = timeHHMM.split(":").map(Number);
 
   // Find the UTC instant whose wall-clock in fromZone matches the requested time.
   let utc = Date.UTC(year, month - 1, day, hours, minutes);

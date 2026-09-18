@@ -59,8 +59,8 @@ export function createJpgToPdfProcessor(): ToolProcessor {
       pdf.setProducer("Pixora");
       pdf.setCreator("Pixora JPG to PDF");
 
-      for (let index = 0; index < files.length; index += 1) {
-        const bytes = await imageToJpegBytes(files[index]);
+      for (const [index, file] of files.entries()) {
+        const bytes = await imageToJpegBytes(file);
         const image = await pdf.embedJpg(bytes);
         const page = pdf.addPage([image.width, image.height]);
         page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });

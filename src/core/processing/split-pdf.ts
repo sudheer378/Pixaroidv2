@@ -53,6 +53,9 @@ export function createSplitPdfProcessor(): ToolProcessor {
   return {
     async process(input: File | File[], context?: ToolContext) {
       const file = Array.isArray(input) ? input[0] : input;
+      if (!file) {
+        throw new ProcessingError("FILE_REQUIRED", "Select a PDF file to split.");
+      }
       const mode = (context?.options?.mode as SplitMode | undefined) ?? "range";
       const rangeText = (context?.options?.range as string | undefined) ?? "";
 
@@ -102,6 +105,9 @@ export function createSplitPdfProcessor(): ToolProcessor {
 
       if (pageCount === 1) {
         const only = Object.values(entries)[0];
+        if (!only) {
+          throw new ProcessingError("PROCESSING_FAILED", "The PDF page could not be extracted.");
+        }
         return new File([blobFromBytes(only, "application/pdf")], `${stem}-page-1.pdf`, {
           type: "application/pdf",
           lastModified: Date.now(),

@@ -9,8 +9,22 @@ export type WorkerImageOptions = {
 
 let worker: Worker | null = null;
 
+/**
+ * Whether the worker pipeline can run here. Requires Workers (for the
+ * off-main-thread hop) and OffscreenCanvas, which the worker uses to draw —
+ * Safari only gained the latter in 16.4, so callers must keep a main-thread
+ * fallback rather than treating this as always true.
+ */
+export function canUseImageWorker(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof Worker !== "undefined" &&
+    typeof OffscreenCanvas !== "undefined"
+  );
+}
+
 function getWorker(): Worker {
-  if (typeof window === "undefined" || typeof Worker === "undefined") {
+  if (!canUseImageWorker()) {
     throw new ProcessingError("BROWSER_UNSUPPORTED", "Web Workers are unavailable in this browser.");
   }
   worker ??= new Worker(new URL("../../workers/image.worker.ts", import.meta.url));

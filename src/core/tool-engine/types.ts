@@ -1,4 +1,3 @@
-import type { ProcessingError } from "../processing/errors";
 import type { ProcessingStatus } from "../processing/types";
 
 export type ToolOptions = Readonly<Record<string, unknown>>;
@@ -17,8 +16,4 @@ export type ToolProcessor = {
 export type ToolRunResult = {
   output: File | Blob;
   durationMs: number;
-};
-
-export type ToolRunFailure = {
-  error: ProcessingError | Error;
 };

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { toolRegistry, getToolsByCategory } from "@/core/tools/registry";
 import { toolCategories } from "@/core/tools/categories";
 import { SiteHeader } from "@/components/layout/site-header";
@@ -17,6 +18,10 @@ const popularSlugs = [
   "percentage-calculator",
   "jpg-to-pdf",
 ];
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 const categoryAccents: Record<string, string> = {
   pdf: "bg-rose-50 text-rose-700 border-rose-100",

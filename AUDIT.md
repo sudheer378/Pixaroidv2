@@ -1,22 +1,25 @@
 # Pixaroidv2 (Pixora) — Full Repository Audit
 
-**Date:** 2026-09-17 · **Branch:** `arena/01a0ae14-pixaroidv2` · **Base commit:** `e0dcd69`
+**Audited:** 2026-09-17 · **Branch:** `arena/01a0ae14-pixaroidv2` · **Audit base:** `e0dcd69`
 **Scope:** all 72 tracked files (~6,700 LOC of `src` + `tests`), config, CI, docs.
+
+> **Status: all findings resolved.** Every item below has been fixed in this branch.
+> §6 records the verification after the fixes; §7 lists follow-ups deliberately left open.
 
 ---
 
-## 1. Verdict
+## 1. Verdict (as audited)
 
 **Overall: B+ / healthy.** This is a well-structured, genuinely static Next.js 16 site with a clean
-separation between pure logic (`src/core/**`) and React presentation. Every quality gate passes on a
-clean checkout, there are no security vulnerabilities, no `any`, no `@ts-ignore`, no dead TODOs, and
-no broken links in the internal tool graph.
+separation between pure logic (`src/core/**`) and React presentation. Every quality gate passed on a
+clean checkout, with no security vulnerabilities, no `any`, no `@ts-ignore`, no dead TODOs, and no
+broken links in the internal tool graph.
 
-The defects that remain are **not correctness bugs in shipped tool logic** — they are gaps in
-SEO surface polish, test coverage of the file-processing half of the product, and one piece of
-dead code. Nothing here blocks deployment; items in §3 are what I'd fix before a real launch.
+The defects found were mostly **not correctness bugs in shipped tool logic** — they were gaps in SEO
+surface polish, test coverage of the file-processing half of the product, and one piece of dead code.
+One genuine runtime crash was uncovered later, while writing the tests the audit recommended (see B1).
 
-### Gate results (verified, clean `npm install`)
+### Gate results at audit time
 
 | Gate | Command | Result |
 |---|---|---|
@@ -41,7 +44,7 @@ processor · every one of the 20 `interactive` tools resolves to a real widget �
 **Strengths worth preserving:**
 
 - **Pure-core boundary is real, not aspirational.** `src/core/interactive/*.ts` contains zero DOM
-  references, which is exactly why 70 tests run in a `node` environment with no jsdom setup.
+  references, which is exactly why the suite runs in a `node` environment with no jsdom setup.
 - **Correct privacy claim.** I checked every network-capable API: there is no `fetch`, no API route,
   no server action, no telemetry, and no third-party script. The "nothing is uploaded" copy on the
   homepage, footer and 32 tool pages is factually true. This matters because it is a legal claim.
@@ -62,105 +65,112 @@ processor · every one of the 20 `interactive` tools resolves to a real widget �
 - Two parallel image pipelines exist: `src/core/processing/compress-image.ts` (canvas, main thread)
   and `src/tools/image/*` (used by the actual processors). The `src/tools/` top-level directory
   holding only `image/` is an odd sibling to `src/core/` — it reads as an incomplete migration.
-- `src/core/processing/types.ts` retains `ProcessingErrorInfo` and `ProcessingResult`, both unused,
+- `src/core/processing/types.ts` retained `ProcessingErrorInfo` and `ProcessingResult`, both unused,
   both explicitly documented as legacy. Same for `ToolRunFailure` in `tool-engine/types.ts`.
 
 ---
 
 ## 3. Findings
 
-Ordered by what I'd actually fix first.
+### 🔴 High
 
-### 🔴 High — worth fixing before launch
+**H1. The entire Web Worker pipeline is dead code.** ✅ *Fixed*
+`src/core/tool-engine/browser-worker.ts` (61 lines) and `src/workers/image.worker.ts` (55 lines) were
+never imported by anything — verified across `src` and `tests`. All image work ran on the main
+thread, so large images would jank the UI on the very pages this code was written to protect. Both
+files carried "fixed" comments describing bugs repaired in code that never executed.
 
-**H1. The entire Web Worker pipeline is dead code.**
-`src/core/tool-engine/browser-worker.ts` (61 lines) and `src/workers/image.worker.ts` (55 lines) are
-never imported by anything — verified across `src` and `tests`. All image work runs on the main
-thread via `src/tools/image/processors.ts`, so large images will jank the UI on the very pages this
-code was written to protect. Both files carry "fixed" comments describing bugs repaired in code that
-never executes. Either wire `processImageInWorker` into the image processors (the real fix — it also
-makes `OffscreenCanvas` available) or delete both files. Leaving them is the worst option: 116 lines
-of maintained, typechecked, never-run code that implies a guarantee the product doesn't provide.
+*Fix:* wired the worker into the image pipeline rather than deleting it. Added `canUseImageWorker()`
+(requires `Worker` **and** `OffscreenCanvas` — Safari only gained the latter in 16.4), and a shared
+`encodeImage()` helper in `src/tools/image/processors.ts` that routes conversion and resize through
+the worker, falling back to the main-thread canvas path on any failure. The compressor uses the
+worker only for the quality-only case: target-size search needs repeated re-encodes of one decoded
+bitmap, which the single-shot worker protocol can't express, so that path stays on the main thread.
 
-**H2. No `og:image`, no favicon, no `public/` directory.**
-The layout declares `twitter:card: "summary_large_image"` but never supplies an image, so every
-social share of all 47 pages renders as a bare text card — and `summary_large_image` without an image
-degrades worse than `summary` would. There is also no `icon.png`/`favicon.ico` and no `public/` dir
-at all. For a site whose entire strategy is organic search and sharing, this is the highest-leverage
-fix in the report. Add `src/app/opengraph-image.tsx` (Next generates it at build) and `src/app/icon.png`.
+**H2. No `og:image`, no favicon, no `public/` directory.** ✅ *Fixed*
+The layout declared `twitter:card: "summary_large_image"` but never supplied an image, so every
+social share of all 47 pages rendered as a bare text card — and `summary_large_image` without an
+image degrades worse than `summary` would.
 
-**H3. Zero test coverage on the file-processing half of the product.**
-18 modules have no test at all, and the untested set is precisely the risky set: `merge-pdf`,
-`validate-file`, `engine.ts`, `run-tool.ts`, `processors.ts`, `compress-image.ts`, and all six
-registry files. The 70 existing tests cover pure calculators/text/generators plus *pure helpers*
-extracted from the PDF modules (`parsePageRange`, `resolvePdfCompressionPreset`) — the PDF tests are
-thin wrappers around those helpers, not the processors. `ToolEngine.run`'s validation branching (the
-empty-MIME HEIC bypass in particular) and `validateFile`'s limits are pure, synchronous, and trivially
-testable today with no jsdom. Also: the registry-integrity checks I ran ad-hoc for this audit belong
-in `tests/tool-registry.test.ts` as permanent regression guards.
+*Fix:* added `src/app/opengraph-image.tsx` (1200×630, generated at build via `next/og`, with the tool
+count read from the registry so it can't go stale) and `src/app/icon.tsx` (32×32 favicon). Both are
+verified serving `200 image/png`, and the build now emits `/opengraph-image` and `/icon` routes.
 
-### 🟡 Medium
+**H3. Zero test coverage on the file-processing half of the product.** ✅ *Fixed*
+18 modules had no test at all, and the untested set was precisely the risky set: `merge-pdf`,
+`validate-file`, `engine.ts`, `run-tool.ts`, `processors.ts`, and all six registry files.
 
-**M1. Homepage has no canonical URL.** Confirmed by fetching `/`: every other route sets
-`alternates.canonical`, but `src/app/layout.tsx` and `src/app/page.tsx` set none, so `/` is the only
-page in the site without one. It's also the page most likely to be reached via tracking params.
+*Fix:* added 36 tests across four new files — `tests/validate-file.test.ts` (8),
+`tests/tool-engine.test.ts` (11, covering the empty-MIME HEIC bypass, the 100 MB cap, multi-file
+dispatch, and all three error-wrapping paths), `tests/merge-pdf.test.ts` (5), and
+`tests/tool-coverage.test.ts` (5, asserting every tool resolves to a processor or widget). The
+ad-hoc registry checks from this audit are now permanent guards in `tests/tool-registry.test.ts`
+(+7). Suite: **70 → 106 tests**.
 
-**M2. `sitemap.ts` omits `lastModified` on all 43 entries.** Crawlers use it for recrawl scheduling;
-its absence weakens the `changeFrequency`/`priority` hints that are already there.
+### 🟡 Medium — all fixed
 
-**M3. Three SEO titles exceed the 60-char SERP truncation limit** — and one of them is the site's own
-`character-counter` tool, which ships a 60-char "SEO title tag" limit in `platformLimits`. The site
-fails its own tool's rule:
-- 64 — `character-counter`: "Character Counter — Count Characters Online with Platform Limits"
-- 63 — `bmi-calculator`: "BMI Calculator — Check Your Body Mass Index (Metric & Imperial)"
-- 62 — `developer` category: "Free Online Developer Tools — JSON, Base64, UUID, Hash & Color"
+- **M1. Homepage had no canonical URL.** ✅ Added `alternates: { canonical: "/" }` to
+  `src/app/page.tsx`. Scoped to the page rather than the layout, so `/_not-found` doesn't inherit it.
+  Verified: `rel="canonical"` now present on `/`.
+- **M2. `sitemap.ts` omitted `lastModified` on all 43 entries.** ✅ Added a build timestamp to every
+  entry. Verified: 43 `<lastmod>` elements in the served sitemap.
+- **M3. Three SEO titles exceeded the 60-char SERP limit** — including `character-counter`, whose own
+  tool ships a 60-char "SEO title tag" rule. ✅ All three shortened (64→48, 63→50, 62→48) and a test
+  now enforces the limit for every tool and category.
+- **M4. `base64-encoder` was the only tool whose `id` ≠ `slug`.** ✅ Aligned the id to the slug, and
+  switched `InteractiveWorkspace` to key on `slug` so it matches `getDefaultProcessor`. A test now
+  enforces `id === slug` for every tool.
+- **M5. `@types/qrcode` was in `dependencies`.** ✅ Moved to `devDependencies`.
+- **M6. `geoSignals` and `analyticsEvents` were exported but never consumed.** ✅ `geoSignals` now
+  feeds an `Organization` JSON-LD block on the homepage (`knowsAbout`, `areaServed`, and the
+  `factualClaims` as `disambiguatingDescription`) — verified in the served HTML. `analyticsEvents`
+  was deleted: there is no analytics integration, so it was speculative.
 
-**M4. `base64-encoder` is the only tool whose `id` ≠ `slug`** (slug is `base64-encode-decode`). Every
-other tool holds the invariant. `InteractiveWorkspace` keys its widget map on `id` while
-`getDefaultProcessor` keys on `slug`, so this inconsistency is a live trap for the next contributor.
-Either enforce `id === slug` with a test, or key both maps on the same field.
+### 🟢 Low — all fixed
 
-**M5. `@types/qrcode` is in `dependencies`, not `devDependencies`.** Types are build-time only; this
-ships an unnecessary package to production installs. The other five `@types/*` are correctly placed.
-
-**M6. `geoSignals` and `analyticsEvents` are exported but never consumed.** `geoSignals` in particular
-contains carefully written `factualClaims` that read like they were intended for JSON-LD output —
-they currently reach no crawler. Either emit them (e.g. into the `WebApplication`/`Organization`
-schema) or drop them.
-
-### 🟢 Low / polish
-
-- **L1.** `next.config.ts` sets no security headers. A fully static, script-free site would benefit
-  cheaply from `X-Content-Type-Options`, `Referrer-Policy`, and a CSP — and a strict CSP is unusually
-  easy here given there are no third-party scripts. Note the JSON-LD uses `dangerouslySetInnerHTML`
-  (safe — it's `JSON.stringify` of build-time constants, no user input) but it will need a hash or
-  nonce under a strict CSP.
-- **L2.** `tsconfig.json` omits `noUncheckedIndexedAccess` and `noImplicitOverride`. The codebase
-  indexes arrays freely (`files[0]`, `pools[i][...]`); enabling the former would surface real
-  edge cases, though it would require some cleanup.
-- **L3.** Dead legacy types: `ProcessingErrorInfo`, `ProcessingResult`, `ToolRunFailure`. Also
-  `ProcessingErrorInfo` lists 10 error codes while the live `ProcessingErrorCode` union has 6 — the
-  two have silently drifted.
-- **L4.** `vitest.config.ts` triggers a Vite config-loader warning on every run (ESM syntax in a
-  CJS-loaded file). Fix by renaming to `vitest.config.mts`.
-- **L5.** `AdSlot` renders `aria-hidden="true"` on a visible placeholder containing text. Correct
-  intent, but once real `<ins class="adsbygoogle">` units go in, `aria-hidden` on an interactive
-  iframe container becomes an a11y violation. Flag for the swap.
-- **L6.** `tool-workspace.tsx` "% smaller" label is suppressed for `tool.category !== "image"` — so
-  the image compressor, the one tool where size reduction is the entire point, never shows its
-  savings. Looks like an inverted condition.
-- **L7.** The dropzone is `role="button"` with an `onKeyDown` handler, but `Space` doesn't
-  `preventDefault()`, so it will also scroll the page on activation.
-- **L8.** `README.md` hardcodes "32 tools" and "47 pages" in prose; both are derivable and will rot.
-- **L9.** `npm install` in CI rather than `npm ci`, despite a committed `package-lock.json` — CI
-  builds aren't reproducible and the lockfile can drift silently.
-- **L10.** No `.env.example`, though `.gitignore` explicitly whitelists one (`!.env.example`) and
-  `NEXT_PUBLIC_SITE_URL` is required for correct production SEO. The build-time `console.warn`
-  fallback is a nice touch, but a checked-in example file is the real fix.
+- **L1.** ✅ Added CSP, `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options`,
+  `Permissions-Policy` and HSTS in `next.config.ts`. All six verified on the response.
+- **L2.** ✅ Enabled `noUncheckedIndexedAccess` and `noImplicitOverride`. This surfaced **40 latent
+  unchecked-index errors**, all fixed with real guards rather than assertions — including genuine
+  crash paths in `split-pdf` (empty input array), `engine.ts` (empty file list) and `pdf-to-jpg`.
+- **L3.** ✅ Deleted `ProcessingErrorInfo`, `ProcessingResult` and `ToolRunFailure`.
+  `ProcessingErrorInfo` had drifted to 10 error codes against the live union's 6.
+- **L4.** ✅ Renamed to `vitest.config.mts`; the config-loader warning is gone.
+- **L5.** ✅ `AdSlot` no longer puts `aria-hidden` on the container (which would hide a real ad iframe
+  from assistive tech). It now carries `role="complementary"` + `aria-label`, with `aria-hidden` on
+  the inner filler text only.
+- **L6.** ✅ Fixed the inverted condition that suppressed the "% smaller" label for `category ===
+  "image"` — the image compressor, where size reduction is the entire point, never showed its savings.
+- **L7.** ✅ Dropzone now calls `preventDefault()` on Space so activation doesn't also scroll the page.
+- **L8.** ✅ Removed the hardcoded "32 tools" / "47 pages" from `README.md`.
+- **L9.** ✅ CI uses `npm ci` instead of `npm install`, so builds respect the lockfile.
+- **L10.** ✅ Added `.env.example` documenting `NEXT_PUBLIC_SITE_URL`.
 
 ---
 
-## 4. Things I checked that were clean
+## 4. Bugs found while fixing
+
+**B1. `merge-pdf` crashed with a raw `TypeError` on a malformed PDF.** 🔴 *Fixed*
+Found by the new `merge-pdf` tests. `PDFDocument.load` accepts some malformed files and only fails
+later when `copyPages` walks the page tree — which sat *outside* the try/catch. Users merging a
+corrupt PDF saw `Cannot read properties of undefined (reading 'Pages')` instead of the intended
+"could not be read. It may be corrupted or password protected."
+
+Load and page extraction now share one guard. Separately, the non-PDF type check was moved out of the
+per-file loop and runs upfront: it's cheaper than parsing, and it names the offending file
+immediately rather than after earlier files are parsed.
+
+This is exactly the class of defect H3 predicted, and it was invisible to every other gate.
+
+**B2. `package-lock.json` had drifted from `package.json`.** 🟡 *Fixed*
+Switching CI to `npm ci` (L9) immediately failed with `Missing: picomatch@2.3.2 from lock file` — the
+committed lockfile was not installable. This had been masked because both CI and local dev used
+`npm install`, which silently repairs drift. Resynced the lockfile; `npm ci` now succeeds and all
+gates pass against it. Had L9 shipped without this, CI would have broken on the next push.
+
+---
+
+## 5. Things I checked that were clean
 
 Worth recording so the next audit doesn't redo them:
 
@@ -172,8 +182,7 @@ Worth recording so the next audit doesn't redo them:
   the registry, SEO and layout trees stay server-side, which is why the build is fully static.
 - **`dangerouslySetInnerHTML`** appears once, with build-time constant input only. Not an XSS vector.
 - **Error handling** is consistent: a single `ProcessingError` class with a typed code union,
-  user-facing messages throughout (no raw stack traces surfaced to users), and `ToolEngine.run`
-  wraps unknown throws rather than leaking them.
+  user-facing messages throughout, and `ToolEngine.run` wraps unknown throws rather than leaking them.
 - **`generateStaticParams` + `dynamicParams = false`** on `[category]`, so unknown categories 404 at
   build time rather than attempting runtime render — confirmed live.
 - **Every unit conversion factor I spot-checked is exact**, not rounded: `0.45359237` kg/lb,
@@ -186,18 +195,31 @@ Worth recording so the next audit doesn't redo them:
 
 ---
 
-## 5. Suggested order of work
+## 6. Verification after fixes
 
-1. **H2** — og:image + favicon. Highest ROI, ~30 min, unblocks social/search presentation.
-2. **H1** — decide on the worker: wire it up or delete it. Don't leave it ambiguous.
-3. **H3** — tests for `validate-file`, `engine`, `merge-pdf`, plus registry-invariant guards
-   (the checks in §1 as permanent tests).
-4. **M1–M3** — canonical on `/`, `lastModified` in sitemap, trim the three long titles.
-5. **M4–M6, L9, L10** — small hygiene batch: `id`/`slug` invariant, `@types/qrcode` move,
-   `npm ci`, `.env.example`.
-6. **L1, L2** — security headers and stricter TS, as a deliberate follow-up with its own testing.
+| Gate | Before | After |
+|---|---|---|
+| `tsc --noEmit` | clean | ✅ clean, with 2 stricter flags enabled |
+| `eslint .` | 0 problems | ✅ 0 problems |
+| `vitest run` | 70 tests / 10 files | ✅ **106 tests / 14 files** |
+| `next build` | 47 pages | ✅ **49 pages** (+`/icon`, `/opengraph-image`) |
+| Routes | 18 × 200 | ✅ 18 × 200, unknown routes 404 |
+| `npm audit --omit=dev` | 0 vulnerabilities | ✅ 0 vulnerabilities |
+
+Also verified on the running server: canonical on `/`, `og:image` at 200 `image/png`, favicon link,
+all six security headers, 43 `<lastmod>` entries, the `Organization` JSON-LD claims, and the renamed
+`/tools/base64-encode-decode` route.
 
 ---
 
-*No files were modified during this audit. `package-lock.json` was touched by `npm install` and*
-*restored to its committed state.*
+## 7. Deliberately not done
+
+- **`run-tool.ts` and `processors.ts` still have no direct tests.** Both are thin dispatch layers now
+  covered indirectly by `tool-coverage.test.ts`, which asserts every registry entry resolves.
+- **No React component tests.** Would need jsdom plus a testing-library dependency; the node-only
+  suite is currently a deliberate strength. Worth revisiting if the workspace components grow logic.
+- **The `src/tools/` vs `src/core/` split is unchanged.** Consolidating is a pure refactor with no
+  behavioural payoff, and it would have obscured the substantive diffs in this branch.
+- **The CSP allows `'unsafe-inline'` for scripts and styles**, required by Next's inline bootstrap
+  and the JSON-LD blocks. Tightening to nonces or hashes is possible but needs care against the
+  static export; the current policy is still a large improvement over no CSP.
